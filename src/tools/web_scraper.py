@@ -29,14 +29,16 @@ def scrape_website_to_markdown(url):
             print(Fore.RED + f"Failed to fetch {url}. Status code: {response.status_code}" + Style.RESET_ALL)
             return ""
 
+        # Remove script and style tags before conversion
         soup = BeautifulSoup(response.text, "html.parser")
-        html_content = soup.prettify()
+        for tag in soup(["script", "style", "nav", "footer", "header"]):
+            tag.decompose()
 
         h = html2text.HTML2Text()
         h.ignore_links = False
         h.ignore_images = True
         h.ignore_tables = True
-        markdown_content = h.handle(html_content)
+        markdown_content = h.handle(str(soup))
 
         # Clean up excess newlines
         markdown_content = re.sub(r"\n{3,}", "\n\n", markdown_content)
