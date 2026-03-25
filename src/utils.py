@@ -53,7 +53,7 @@ def get_llm_by_provider(llm_provider, model):
 def invoke_llm(
     system_prompt,
     user_message,
-    model="gemini-1.5-flash",
+    model="gemini-2.5-flash",
     llm_provider="google",
     response_format=None
 ):
@@ -63,7 +63,7 @@ def invoke_llm(
     Parameters:
         system_prompt: The system-level instruction for the LLM.
         user_message: The user-level input content.
-        model: The model identifier (default: gemini-1.5-flash).
+        model: The model identifier (default: gemini-2.5-flash).
         llm_provider: The provider name (default: google).
         response_format: Optional Pydantic model for structured output.
 

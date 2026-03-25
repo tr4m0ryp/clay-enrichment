@@ -257,7 +257,7 @@ def _score_dpp_fit(context):
         return invoke_llm(
             system_prompt=DPP_FIT_SCORING_PROMPT,
             user_message=context,
-            model="gemini-1.5-pro",
+            model="gemini-2.5-flash",
             response_format=DppFitScore,
         )
     except Exception as e:
