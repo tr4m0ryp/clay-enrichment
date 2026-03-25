@@ -41,7 +41,7 @@ Clay-enrichment is an AI-powered lead discovery and outreach automation system b
 ### Architecture
 - All code is synchronous. Do not use `async`/`await`.
 - Notion is the only CRM integration. Do not add other CRM integrations.
-- Gemini 1.5 Flash is the default AI model.
+- Gemini 2.5 Flash is the default AI model.
 - LLM calls go through `invoke_llm()` in `src/utils.py`. Do not call LangChain models directly outside that function.
 - Prompt constants live in `src/prompts.py` as `UPPER_SNAKE_CASE` strings.
 - Structured output schemas live in `src/structured_outputs.py` as Pydantic models.
@@ -59,8 +59,9 @@ Clay-enrichment is an AI-powered lead discovery and outreach automation system b
 ## Git Workflow
 
 - Never push directly to `main`. All new work goes on a feature branch.
+- **One branch per feature or task.** Each distinct piece of work (new feature, bug fix, cleanup) gets its own branch. Do not mix unrelated changes on the same branch.
 - Branch naming: `feature/<short-description>` for new features, `fix/<short-description>` for bug fixes, `cleanup/<short-description>` for refactoring or dead code removal.
-- Push the branch to the remote after completing a major task or logical unit of work, not after every small change.
+- **Push the branch when the feature is done.** Once all commits for a feature are complete and the code works, push the branch to the remote. Do not leave finished work unpushed.
 - Do not merge branches. All merges are done manually after human review.
 - Write clear, concise commit messages in imperative mood (e.g., "Rewrite scoring prompt for Avelero"). No emojis in commit messages.
 - Keep commits focused. One commit per logical change.
