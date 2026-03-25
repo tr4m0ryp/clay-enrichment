@@ -2,7 +2,7 @@ langchain-core
 langchain_community
 langchain_google_genai
 langchain_openai
-google-api-python-client
+langchain_anthropic
 colorama
 python-dotenv
 bs4
