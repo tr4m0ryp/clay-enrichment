@@ -1,36 +1,49 @@
+import argparse
 import os
-from dotenv import load_dotenv
-from src.graph import OutReachAutomation
-from src.state import *
-from src.tools.leads_loader.airtable import AirtableLeadLoader
-from src.tools.leads_loader.google_sheets import GoogleSheetLeadLoader
 
-# Load environment variables from a .env file
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
 load_dotenv()
 
-if __name__ == "__main__":
-    # Use Airtable for accessing your leads list
-    lead_loader = AirtableLeadLoader(
-        access_token=os.getenv("AIRTABLE_ACCESS_TOKEN"),
-        base_id=os.getenv("AIRTABLE_BASE_ID"),
-        table_name=os.getenv("AIRTABLE_TABLE_NAME"),
+
+def main():
+    """
+    Entry point for the Avelero lead discovery and outreach pipeline.
+    Supports running the full pipeline, individual layers, email sender,
+    or Notion database setup.
+    """
+    parser = argparse.ArgumentParser(description="Avelero Lead Discovery Pipeline")
+    parser.add_argument(
+        "--send-emails",
+        action="store_true",
+        help="Run only the email sender (polls Notion for approved emails)"
     )
-    
-    # Use Sheet for accessing your leads list
-    # lead_loader = GoogleSheetLeadLoader(
-    #     spreadsheet_id=os.getenv("SHEET_ID"),
-    # )
-    
-    # Instantiate the OutReachAutomation class
-    automation = OutReachAutomation(lead_loader)
-    app = automation.app
-    
-    # initial graph inputs:
-    # Lead ids to be processed, leave empty to fetch all news leads
-    inputs = {"leads_ids": []}
+    parser.add_argument(
+        "--layer",
+        choices=["discovery", "enrichment", "people", "email"],
+        help="Run a single layer for testing"
+    )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Run Notion database setup"
+    )
+    args = parser.parse_args()
+
+    if args.setup:
+        from setup_notion import setup_databases
+        setup_databases()
+    elif args.send_emails:
+        from src.email.sender import run_email_sender
+        run_email_sender()
+    elif args.layer:
+        from src.orchestrator import run_single_layer
+        run_single_layer(args.layer)
+    else:
+        from src.orchestrator import start_pipeline
+        start_pipeline()
 
 
-    # Run the outreach automation with the provided lead name and email
-    config = {'recursion_limit': 1000}
-    output = app.invoke(inputs, config)
-    print(output)
+if __name__ == "__main__":
+    main()
