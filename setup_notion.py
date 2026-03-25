@@ -38,7 +38,7 @@ def setup_databases():
         print("Set this to the ID of the Notion page where databases should be created.")
         return
 
-    client = Client(auth=api_key)
+    client = Client(auth=api_key, notion_version="2022-06-28")
 
     # Create Companies database
     print(Fore.YELLOW + "Creating Companies database..." + Style.RESET_ALL)

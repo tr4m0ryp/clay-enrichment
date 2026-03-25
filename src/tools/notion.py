@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+from datetime import datetime, timezone
 
 from notion_client import Client
 from colorama import Fore, Style
@@ -11,6 +12,10 @@ from src.state import CompanyRecord, ContactRecord, EmailRecord
 _rate_lock = threading.Lock()
 _last_request_time = 0.0
 _MIN_REQUEST_INTERVAL = 0.35  # slightly over 1/3 second for safety
+
+# Cached Notion client instance (thread-safe via GIL for reads)
+_client_lock = threading.Lock()
+_cached_client = None
 
 
 def _rate_limit():
@@ -29,16 +34,25 @@ def _rate_limit():
 
 def _get_client():
     """
-    Returns an authenticated Notion client using the API key from
-    environment variables.
+    Returns a cached, authenticated Notion client using the API key from
+    environment variables. The client is created once and reused across
+    all calls.
 
     Returns:
         A notion_client.Client instance.
     """
-    api_key = os.getenv("NOTION_API_KEY")
-    if not api_key:
-        raise ValueError("NOTION_API_KEY environment variable is not set")
-    return Client(auth=api_key)
+    global _cached_client
+    if _cached_client is not None:
+        return _cached_client
+    with _client_lock:
+        # Double-check after acquiring lock
+        if _cached_client is not None:
+            return _cached_client
+        api_key = os.getenv("NOTION_API_KEY")
+        if not api_key:
+            raise ValueError("NOTION_API_KEY environment variable is not set")
+        _cached_client = Client(auth=api_key, notion_version="2022-06-28")
+        return _cached_client
 
 
 def _get_companies_db_id():
@@ -71,9 +85,10 @@ def company_exists(company_name):
     try:
         _rate_limit()
         client = _get_client()
-        response = client.databases.query(
-            database_id=_get_companies_db_id(),
-            filter={
+        response = _query_database(
+            client,
+            _get_companies_db_id(),
+            filter_obj={
                 "property": "Company Name",
                 "title": {"equals": company_name}
             }
@@ -139,12 +154,16 @@ def update_company(page_id, updates):
         client = _get_client()
         properties = {}
         for key, value in updates.items():
-            if key == "Status":
-                properties[key] = {"select": {"name": value}}
+            if key in ("Status", "Industry"):
+                properties[key] = {"select": {"name": value}} if value else {"select": None}
             elif key == "DPP Fit Score":
                 properties[key] = {"number": value}
             elif key in ("Website", "LinkedIn", "Contact LinkedIn"):
                 properties[key] = {"url": value or None}
+            elif key == "Contact Email":
+                properties[key] = {"email": value or None}
+            elif key == "Contact Phone":
+                properties[key] = {"phone_number": value or None}
             else:
                 properties[key] = {"rich_text": [{"text": {"content": str(value)[:2000]}}]}
         client.pages.update(page_id=page_id, properties=properties)
@@ -164,24 +183,25 @@ def query_companies_by_status(status):
         A list of CompanyRecord instances.
     """
     try:
-        _rate_limit()
         client = _get_client()
         results = []
         has_more = True
         start_cursor = None
 
         while has_more:
-            query_params = {
-                "database_id": _get_companies_db_id(),
+            _rate_limit()
+            body = {
                 "filter": {
                     "property": "Status",
                     "select": {"equals": status}
                 }
             }
             if start_cursor:
-                query_params["start_cursor"] = start_cursor
+                body["start_cursor"] = start_cursor
 
-            response = client.databases.query(**query_params)
+            response = _query_database(
+                client, _get_companies_db_id(), body=body
+            )
 
             for page in response.get("results", []):
                 results.append(_page_to_company_record(page))
@@ -266,6 +286,11 @@ def update_email_status(page_id, status, sender=""):
         }
         if sender:
             properties["Sender Address"] = {"rich_text": [{"text": {"content": sender}}]}
+        # Record the sent date when marking as Sent
+        if status == "Sent":
+            properties["Sent Date"] = {
+                "date": {"start": datetime.now(timezone.utc).isoformat()}
+            }
         client.pages.update(page_id=page_id, properties=properties)
     except Exception as e:
         print(Fore.RED + f"Notion error updating email status {page_id}: {e}" + Style.RESET_ALL)
@@ -282,24 +307,25 @@ def get_emails_by_status(status):
         A list of EmailRecord instances.
     """
     try:
-        _rate_limit()
         client = _get_client()
         results = []
         has_more = True
         start_cursor = None
 
         while has_more:
-            query_params = {
-                "database_id": _get_emails_db_id(),
+            _rate_limit()
+            body = {
                 "filter": {
                     "property": "Status",
                     "select": {"equals": status}
                 }
             }
             if start_cursor:
-                query_params["start_cursor"] = start_cursor
+                body["start_cursor"] = start_cursor
 
-            response = client.databases.query(**query_params)
+            response = _query_database(
+                client, _get_emails_db_id(), body=body
+            )
 
             for page in response.get("results", []):
                 results.append(_page_to_email_record(page))
@@ -311,6 +337,31 @@ def get_emails_by_status(status):
     except Exception as e:
         print(Fore.RED + f"Notion error querying emails: {e}" + Style.RESET_ALL)
         return []
+
+
+def _query_database(client, database_id, filter_obj=None, body=None):
+    """
+    Queries a Notion database using the raw request method. This is needed
+    because notion-client v3 removed databases.query().
+
+    Parameters:
+        client: An authenticated Notion client.
+        database_id: The database ID to query.
+        filter_obj: Optional filter dict (shorthand for simple queries).
+        body: Optional full request body dict (overrides filter_obj).
+
+    Returns:
+        The API response dict with "results", "has_more", and "next_cursor".
+    """
+    if body is None:
+        body = {}
+    if filter_obj and "filter" not in body:
+        body["filter"] = filter_obj
+    return client.request(
+        path=f"databases/{database_id}/query",
+        method="POST",
+        body=body,
+    )
 
 
 def _get_text_property(properties, key):
@@ -375,6 +426,7 @@ def _page_to_company_record(page):
         linkedin_url=props.get("LinkedIn", {}).get("url", "") or "",
         social_media=_get_text_property(props, "Social Media"),
         dpp_fit_score=score,
+        dpp_fit_reasoning=_get_text_property(props, "DPP Fit Reasoning"),
         status=status,
         notion_page_id=page["id"],
         discovery_source=_get_text_property(props, "Discovery Source"),
