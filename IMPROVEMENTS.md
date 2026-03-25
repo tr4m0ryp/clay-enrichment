@@ -145,7 +145,21 @@ We should evaluate building our own enrichment where possible:
 
 Work through these steps in this exact order:
 
-- [ ] **1. Improve system prompts for Avelero** -- Research Avelero (use Claude Code to visit avelero.com, check LinkedIn, understand the DPP business). Rewrite all prompts in `src/prompts.py` so the AI understands Avelero, our target market, and generates results for companies like Filling Pieces, Daily Paper, etc. This is step one because once the prompts are correct, Claude Code will automatically generate correct prompts for all the other layers too.
+- [ ] **1. Work preparation and system prompts for Avelero** -- Before writing any code, set up the project for clean collaboration:
+
+  **1a. Create a `CLAUDE.md` file** in the project root. This file tells Claude Code how to work in this codebase. It should contain:
+  - A description of the project (what Avelero is, what this system does, who the target companies are)
+  - Coding rules: no emojis anywhere (code, comments, docs, commit messages), code must be professional and clean
+  - Every function must have a clear comment explaining what it does, what it takes in, and what it returns
+  - Keep code readable and well-structured -- use meaningful variable names, consistent formatting
+  - Python is the language for this project
+  - Notion is the only CRM -- no other integrations
+  - Gemini 1.5 Flash is the default AI model
+  - Any other project-specific rules that help Claude Code generate correct, consistent output
+
+  **1b. Research Avelero** -- Use Claude Code to visit avelero.com, check their LinkedIn, and understand the DPP business and target market.
+
+  **1c. Rewrite all system prompts** in `src/prompts.py` so the AI understands Avelero, our target market, and generates results for companies like Filling Pieces, Daily Paper, etc. This is step one because once the prompts are correct, Claude Code will automatically generate correct prompts for all the other layers too.
 
 - [ ] **2. Improve the system workflow** -- Redesign the architecture to run four parallel, continuous layers as described in "How the System Should Work." No layer waits on another. The system runs non-stop, picking up new items as they become available.
 
