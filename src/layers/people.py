@@ -179,12 +179,11 @@ def _enrich_contact_with_linkedin(contact):
     try:
         profile_data = scrape_linkedin(contact.linkedin_url, is_company=False)
         if profile_data and isinstance(profile_data, dict):
-            data = profile_data.get("data", profile_data)
             # Update email if not already set and available from LinkedIn
             if not contact.email:
-                contact.email = data.get("email", "") or ""
+                contact.email = profile_data.get("email", "") or ""
             # Update title if available and more specific
-            linkedin_title = data.get("headline", "") or data.get("current_title", "")
+            linkedin_title = profile_data.get("headline", "") or profile_data.get("current_title", "")
             if linkedin_title and (not contact.title or len(linkedin_title) > len(contact.title)):
                 contact.title = linkedin_title
     except Exception as e:
