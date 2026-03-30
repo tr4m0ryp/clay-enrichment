@@ -149,13 +149,19 @@ Work through these steps in this exact order:
 
 - [x] **2. Improve the system workflow** -- Redesigned into 4 parallel layers running as daemon threads via `src/orchestrator.py`. Inter-layer communication via thread-safe queues. Each layer has Notion recovery for independent testing and crash recovery. Error recovery with automatic restarts.
 
-- [ ] **3. Find cheaper alternatives for data enrichment** -- Currently using Serper API (paid) for web search and RapidAPI Fresh LinkedIn Scraper (paid) for LinkedIn. Evaluation pending -- see notes below.
+- [x] **3. Find cheaper alternatives for data enrichment** -- Evaluated. Serper is the best option. See details below.
 
-  **Evaluation notes (2026-03-30):**
-  - Google Custom Search API: 100 free queries/day (10,000/day paid at $5/1000). We already have API keys. However, it requires setting up a Custom Search Engine and results quality may differ from Serper.
-  - Brave Search API: Has a free tier (1 query/second, 2000/month). Paid plans start at $3/1000 queries. Independent index, not Google results.
-  - Serper API (current): 2,500 free queries, then $50/month for 50,000 queries. Returns Google results directly. Most reliable for our use case.
-  - **Recommendation**: Serper is the best option for now. Google CSE is a viable fallback if Serper costs become an issue. Brave Search has a smaller index which may miss niche fashion brands. Notify Moussa for decision.
+  **Evaluation (2026-03-30):**
+
+  | API | Free Tier | Paid Cost/1K queries | Rate Limit | Verdict |
+  |-----|-----------|---------------------|------------|---------|
+  | **Serper** (current) | 2,500 one-time | $1.00 (entry), $0.30 (scale) | 300/sec | Best option. Cheapest, fastest, Google results. |
+  | Brave Search | 2K/mo (legacy only) | $5.00 | 1/sec (free), 20/sec (paid) | 5x more expensive. Independent index may miss niche fashion brands. |
+  | Google Custom Search | 100/day | $5.00 | 10K/day max | Being sunset Jan 2027. Not viable. |
+  | Tavily | 1K/mo | $8.00 | Not documented | 8x more expensive. Built for AI/RAG. |
+  | SearXNG (self-hosted) | Free | VPS only ($5-20/mo) | None | Requires Docker + maintenance. Inconsistent quality. |
+
+  **Decision**: Keep Serper. It is the cheapest commercial option at $1/1K queries, returns Google results, and has the highest throughput (300 queries/sec). Google CSE is being discontinued and cannot serve as a fallback. For LinkedIn scraping, RapidAPI Fresh LinkedIn Scraper remains the only viable option -- there is no free alternative.
 
 - [x] **4. Remove all dead code** -- All unused integrations deleted: Airtable, Google Sheets, HubSpot, Google Docs/Drive, Gmail, YouTube, blog analysis, interview scripts, SPIN questions, RAG/vector DB. Codebase is clean.
 
