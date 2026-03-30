@@ -28,6 +28,9 @@ def run_enrichment_layer(shutdown_event, input_queue, output_queue):
     """
     dpp_threshold = float(os.getenv("DPP_FIT_THRESHOLD", "6"))
 
+    # Recovery: re-queue companies that were discovered but not yet enriched
+    _recover_from_notion(input_queue)
+
     while not shutdown_event.is_set():
         try:
             # Block for up to 5 seconds waiting for work
@@ -263,3 +266,23 @@ def _score_dpp_fit(context):
     except Exception as e:
         log_error(f"[Enrichment] DPP fit scoring failed: {e}")
         return None
+
+
+def _recover_from_notion(input_queue):
+    """
+    On startup, queries Notion for companies with status "Discovered"
+    and adds them to the input queue for enrichment. This allows the
+    enrichment layer to be tested independently or recover after a restart.
+
+    Parameters:
+        input_queue: Queue to push recovered CompanyRecord objects to.
+    """
+    from src.tools.notion import query_companies_by_status
+    try:
+        discovered = query_companies_by_status("Discovered")
+        if discovered:
+            log_status(f"[Enrichment] Recovering {len(discovered)} companies from Notion")
+            for company in discovered:
+                input_queue.put(company)
+    except Exception as e:
+        log_error(f"[Enrichment] Recovery failed: {e}")

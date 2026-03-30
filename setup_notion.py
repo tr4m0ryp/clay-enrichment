@@ -155,6 +155,7 @@ def _create_emails_database(client, parent_page_id):
                     }
                 },
                 "Sender Address": {"rich_text": {}},
+                "Company Page ID": {"rich_text": {}},
                 "Sent Date": {"date": {}},
             }
         )

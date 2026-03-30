@@ -32,7 +32,7 @@ class CompanyRecord(BaseModel):
     )
     status: str = Field(
         default="Discovered",
-        description="Pipeline status: Discovered, Enriched, Contacts Found, Email Drafted, Low Fit"
+        description="Pipeline status: Discovered, Enriched, Contacts Found, Email Drafted, Email Sent, Low Fit"
     )
     notion_page_id: str = Field(
         default="",
@@ -90,6 +90,10 @@ class EmailRecord(BaseModel):
     sender_address: str = Field(
         default="",
         description="Which sender address was used to send this email"
+    )
+    company_notion_id: str = Field(
+        default="",
+        description="Notion page ID of the associated company in the Companies database"
     )
     notion_page_id: str = Field(
         default="",

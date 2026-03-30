@@ -61,8 +61,8 @@ Clay-enrichment is an AI-powered lead discovery and outreach automation system b
 - Never push directly to `main`. All new work goes on a feature branch.
 - **One branch per feature or task.** Each distinct piece of work (new feature, bug fix, cleanup) gets its own branch. Do not mix unrelated changes on the same branch.
 - Branch naming: `feature/<short-description>` for new features, `fix/<short-description>` for bug fixes, `cleanup/<short-description>` for refactoring or dead code removal.
-- **Push the branch when the feature is done.** Once all commits for a feature are complete and the code works, push the branch to the remote. Do not leave finished work unpushed.
-- Do not merge branches. All merges are done manually after human review.
+- **Always push branches to the remote.** Every branch you create must be pushed with `git push -u origin <branch-name>` before the conversation ends. Unpushed work is invisible to the team and effectively does not exist. Push as soon as the feature or fix is complete and working -- do not wait to be asked.
+- **Never merge branches.** Do not run `git merge`, `git rebase`, or create merge commits. All merges are done manually by a human after review. Your job is to commit, push, and stop.
 - Write clear, concise commit messages in imperative mood (e.g., "Rewrite scoring prompt for Avelero"). No emojis in commit messages.
 - Keep commits focused. One commit per logical change.
 - Run `/review` before pushing a branch to catch issues early.

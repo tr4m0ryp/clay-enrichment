@@ -23,6 +23,9 @@ def run_email_generation_layer(shutdown_event, input_queue, output_queue):
         input_queue: Queue of ContactRecord objects from the people layer.
         output_queue: Not used (emails go to Notion for review).
     """
+    # Recovery: re-queue contacts from companies that have contacts but no email yet
+    _recover_from_notion(input_queue)
+
     while not shutdown_event.is_set():
         try:
             contact = input_queue.get(timeout=5)
@@ -62,6 +65,7 @@ def run_email_generation_layer(shutdown_event, input_queue, output_queue):
             recipient_email=contact.email,
             recipient_name=contact.name,
             company_name=contact.company_name,
+            company_notion_id=contact.company_notion_id,
             status="Pending Review",
         )
 
@@ -132,3 +136,30 @@ def _generate_email(contact_name, contact_title, company_name, company_summary):
     except Exception as e:
         log_error(f"[Email] Email generation failed for {contact_name}: {e}")
         return None
+
+
+def _recover_from_notion(input_queue):
+    """
+    On startup, queries Notion for companies with status "Contacts Found"
+    and reconstructs ContactRecord objects from the stored contact data.
+    Adds them to the input queue for email generation. This allows the
+    email layer to be tested independently or recover after a restart.
+
+    Parameters:
+        input_queue: Queue to push recovered ContactRecord objects to.
+    """
+    from src.tools.notion import query_companies_by_status, get_contact_from_company
+    try:
+        companies = query_companies_by_status("Contacts Found")
+        if not companies:
+            return
+        log_status(f"[Email] Recovering contacts from {len(companies)} companies in Notion")
+        for company in companies:
+            if not company.notion_page_id:
+                continue
+            contact = get_contact_from_company(company.notion_page_id)
+            if contact and contact.email:
+                input_queue.put(contact)
+                log_status(f"[Email] Recovered contact: {contact.name} at {company.name}")
+    except Exception as e:
+        log_error(f"[Email] Recovery failed: {e}")

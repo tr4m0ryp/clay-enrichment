@@ -3,7 +3,7 @@ import time
 from collections import defaultdict
 
 from src.email.smtp_client import send_email
-from src.tools.notion import get_emails_by_status, update_email_status
+from src.tools.notion import get_emails_by_status, update_email_status, update_company
 from src.utils import log_status, log_success, log_error
 
 
@@ -89,6 +89,11 @@ def run_email_sender():
                         status="Sent",
                         sender=sender,
                     )
+                    # Update the company status to "Email Sent"
+                    if email_record.company_notion_id:
+                        update_company(email_record.company_notion_id, {
+                            "Status": "Email Sent",
+                        })
                     log_success(f"Sent to {email_record.recipient_email} via {sender}")
                 else:
                     log_error(f"Failed to send to {email_record.recipient_email}")

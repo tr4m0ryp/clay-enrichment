@@ -6,7 +6,7 @@ Automated lead discovery, data enrichment, and outreach system built for [Aveler
 
 The pipeline runs four independent layers in parallel, each in its own thread:
 
-**Layer 1 -- Company Discovery**: Gemini generates search queries targeting fashion and lifestyle brands in the EU market. Google Custom Search finds companies, and the LLM extracts and filters matches. New companies are written to Notion with status "Discovered".
+**Layer 1 -- Company Discovery**: Gemini generates search queries targeting fashion and lifestyle brands in the EU market. Serper API (Google search) finds companies, and the LLM extracts and filters matches. New companies are written to Notion with status "Discovered".
 
 **Layer 2 -- Company Enrichment**: Picks up discovered companies, scrapes their websites, extracts structured data (industry, location, size, products), and scores each company on DPP fit (1-10). Companies above the threshold move forward; low-fit companies are filtered out.
 
@@ -20,8 +20,8 @@ The pipeline runs four independent layers in parallel, each in its own thread:
 
 - Python 3.9+
 - A Notion workspace with API access
-- Google API key (Gemini + Custom Search)
-- Google Custom Search Engine ID
+- Google API key (Gemini)
+- Serper API key (serper.dev, for web search)
 - RapidAPI key (for LinkedIn scraping)
 - SMTP credentials (for email sending)
 
@@ -117,7 +117,7 @@ src/
     smtp_client.py               SMTP connection wrapper
   tools/
     notion.py                    Notion API client (CRUD, queries, rate limiting)
-    search.py                    Google Custom Search API
+    search.py                    Serper API (web search and news search)
     web_scraper.py               Website scraping to markdown
     linkedin.py                  LinkedIn profile scraping via RapidAPI
 ```
@@ -126,7 +126,7 @@ src/
 
 All configuration is done through environment variables in `.env`. See `.env.example` for the complete list including:
 - AI model keys (Gemini)
-- Google Custom Search credentials
+- Serper API key (web search)
 - Notion API key and database IDs
 - LinkedIn scraping (RapidAPI) key
 - SMTP email sending configuration

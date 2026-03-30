@@ -255,6 +255,7 @@ def create_email(email_record):
             "Company": {"rich_text": [{"text": {"content": email_record.company_name}}]},
             "Email Body": {"rich_text": [{"text": {"content": email_record.body[:2000]}}]},
             "Status": {"select": {"name": email_record.status}},
+            "Company Page ID": {"rich_text": [{"text": {"content": email_record.company_notion_id}}]},
         }
         response = client.pages.create(
             parent={"database_id": _get_emails_db_id()},
@@ -337,6 +338,41 @@ def get_emails_by_status(status):
     except Exception as e:
         print(Fore.RED + f"Notion error querying emails: {e}" + Style.RESET_ALL)
         return []
+
+
+def get_contact_from_company(page_id):
+    """
+    Reads the primary contact fields stored on a company page and returns
+    a ContactRecord. Used by the email layer for Notion recovery when
+    restarting or running in single-layer mode.
+
+    Parameters:
+        page_id: The Notion page ID of the company.
+
+    Returns:
+        A ContactRecord instance, or None if no contact email is stored.
+    """
+    try:
+        _rate_limit()
+        client = _get_client()
+        page = client.pages.retrieve(page_id=page_id)
+        props = page.get("properties", {})
+
+        contact_email = props.get("Contact Email", {}).get("email", "") or ""
+        if not contact_email:
+            return None
+
+        return ContactRecord(
+            name=_get_text_property(props, "Contact Name"),
+            email=contact_email,
+            title=_get_text_property(props, "Contact Title"),
+            linkedin_url=props.get("Contact LinkedIn", {}).get("url", "") or "",
+            company_name=_get_title_property(props, "Company Name"),
+            company_notion_id=page_id,
+        )
+    except Exception as e:
+        print(Fore.RED + f"Notion error getting contact from company {page_id}: {e}" + Style.RESET_ALL)
+        return None
 
 
 def _query_database(client, database_id, filter_obj=None, body=None):
@@ -456,5 +492,6 @@ def _page_to_email_record(page):
         company_name=_get_text_property(props, "Company"),
         status=status,
         sender_address=_get_text_property(props, "Sender Address"),
+        company_notion_id=_get_text_property(props, "Company Page ID"),
         notion_page_id=page["id"],
     )

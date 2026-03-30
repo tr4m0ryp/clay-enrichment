@@ -24,6 +24,9 @@ def run_people_layer(shutdown_event, input_queue, output_queue):
     num_queries_per_company = 5
     max_contacts_per_company = 3
 
+    # Recovery: re-queue companies that were enriched but not yet processed
+    _recover_from_notion(input_queue)
+
     while not shutdown_event.is_set():
         try:
             company = input_queue.get(timeout=5)
@@ -190,3 +193,23 @@ def _enrich_contact_with_linkedin(contact):
         log_error(f"[People] LinkedIn enrichment failed for {contact.name}: {e}")
 
     return contact
+
+
+def _recover_from_notion(input_queue):
+    """
+    On startup, queries Notion for companies with status "Enriched"
+    and adds them to the input queue for people discovery. This allows
+    the people layer to be tested independently or recover after a restart.
+
+    Parameters:
+        input_queue: Queue to push recovered CompanyRecord objects to.
+    """
+    from src.tools.notion import query_companies_by_status
+    try:
+        enriched = query_companies_by_status("Enriched")
+        if enriched:
+            log_status(f"[People] Recovering {len(enriched)} companies from Notion")
+            for company in enriched:
+                input_queue.put(company)
+    except Exception as e:
+        log_error(f"[People] Recovery failed: {e}")
