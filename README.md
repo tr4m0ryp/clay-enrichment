@@ -1,39 +1,52 @@
 # Avelero Lead Discovery Pipeline
 
-Automated lead discovery, data enrichment, and outreach system built for [Avelero](https://avelero.com), a Digital Product Passport (DPP) company. The system discovers fashion, streetwear, and lifestyle brands that would benefit from DPP services, enriches company and contact data, generates personalized outreach emails, and manages the review-to-send workflow through Notion.
+Automated lead discovery, company enrichment, contact research, and outreach drafting for [Avelero](https://avelero.com). The pipeline discovers fashion and lifestyle brands, scores them for Digital Product Passport (DPP) relevance, finds decision-makers, drafts personalized emails, and uses Notion as the operational system of record.
 
-## How It Works
+## Overview
 
-The pipeline runs four independent layers in parallel, each in its own thread:
+The application runs as four long-lived pipeline layers plus a separate email sender:
 
-**Layer 1 -- Company Discovery**: Gemini generates search queries targeting fashion and lifestyle brands in the EU market. Serper API (Google search) finds companies, and the LLM extracts and filters matches. New companies are written to Notion with status "Discovered".
+1. `discovery`
+   Generates search queries with Gemini, runs Serper searches, extracts target companies, de-duplicates them against Notion, and creates new company records with status `Discovered`.
+2. `enrichment`
+   Scrapes company websites, analyzes recent news, enriches company data, calculates a DPP fit score, and marks each company as `Enriched` or `Low Fit`.
+3. `people`
+   Searches for relevant decision-makers, extracts contact details from search results, optionally enriches contacts with LinkedIn data, and stores the primary contact on the company record with status `Contacts Found`.
+4. `email`
+   Generates a personalized outreach draft for each contact with an email address, creates a Notion email record with status `Pending Review`, and updates the company status to `Email Drafted`.
+5. `--send-emails`
+   Runs separately from the pipeline. It polls Notion for `Approved` emails, sends them over SMTP using round-robin sender rotation, and updates both email and company statuses to `Sent` / `Email Sent`.
 
-**Layer 2 -- Company Enrichment**: Picks up discovered companies, scrapes their websites, extracts structured data (industry, location, size, products), and scores each company on DPP fit (1-10). Companies above the threshold move forward; low-fit companies are filtered out.
+Each layer runs continuously and can recover its pending work from Notion on startup, which makes restarts and single-layer testing practical.
 
-**Layer 3 -- People Discovery**: Finds decision-makers at qualified companies (sustainability, compliance, product, and operations roles). Extracts contact information from search results and enriches via LinkedIn.
-
-**Layer 4 -- Email Generation**: Generates personalized cold outreach emails referencing each company's products, sustainability efforts, and DPP relevance. Emails land in Notion for human review before sending.
-
-**Email Sender**: A separate process polls Notion for approved emails and sends them via SMTP with round-robin domain rotation and configurable delays.
-
-## Prerequisites
+## Requirements
 
 - Python 3.9+
-- A Notion workspace with API access
-- Google API key (Gemini)
-- Serper API key (serper.dev, for web search)
-- RapidAPI key (for LinkedIn scraping)
-- SMTP credentials (for email sending)
+- A Notion workspace with an internal integration and API access
+- `GOOGLE_API_KEY` for Gemini
+- `SERPER_API_KEY` for Google search and news search through Serper
+- `NOTION_API_KEY` plus the relevant Notion page/database IDs
+- SMTP access for outbound email sending
+- `RAPIDAPI_KEY` is optional but recommended if you want LinkedIn enrichment
 
-## Setup
+## Installation
 
-1. Clone the repository and create a virtual environment:
+1. Create and activate a virtual environment:
 
 ```sh
-git clone <repository-url>
-cd clay-enrichment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+macOS/Linux:
+
+```sh
+source venv/bin/activate
+```
+
+PowerShell:
+
+```powershell
+venv\Scripts\Activate.ps1
 ```
 
 2. Install dependencies:
@@ -42,33 +55,96 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables:
+3. Create your local environment file:
+
+macOS/Linux:
 
 ```sh
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your API keys. See `.env.example` for all required variables.
+PowerShell:
 
-4. Set up Notion databases:
+```powershell
+Copy-Item .env.example .env
+```
 
-Add `NOTION_PARENT_PAGE_ID` to your `.env` (the Notion page where databases will be created), then run:
+4. Fill in `.env` with your credentials and runtime settings.
+
+## Notion Setup
+
+This project expects two databases in Notion:
+
+- `Companies`
+- `Outreach Emails`
+
+The easiest way to create them is:
+
+1. Create a Notion page where the databases should live.
+2. Share that page with your Notion integration.
+3. Set `NOTION_API_KEY` and `NOTION_PARENT_PAGE_ID` in `.env`.
+4. Run:
 
 ```sh
 python main.py --setup
 ```
 
-This creates the Companies and Emails databases in Notion and prints the database IDs. Add those IDs to your `.env` as `NOTION_COMPANIES_DB_ID` and `NOTION_EMAILS_DB_ID`.
+The script creates both databases and prints the generated database IDs. Add those IDs back into `.env` as:
+
+- `NOTION_COMPANIES_DB_ID`
+- `NOTION_EMAILS_DB_ID`
+
+## Configuration
+
+`.env.example` contains the full configuration surface:
+
+```dotenv
+# AI Model (Gemini)
+GOOGLE_API_KEY=
+
+# Web Search (Serper API)
+SERPER_API_KEY=
+
+# LinkedIn Scraping (optional)
+RAPIDAPI_KEY=
+
+# Notion CRM
+NOTION_API_KEY=
+NOTION_PARENT_PAGE_ID=
+NOTION_COMPANIES_DB_ID=
+NOTION_EMAILS_DB_ID=
+
+# Email Sending (SMTP)
+EMAIL_SENDER_ADDRESSES=
+EMAIL_SMTP_HOST=
+EMAIL_SMTP_PORT=587
+EMAIL_SMTP_PASSWORD=
+EMAIL_DELAY_SECONDS=15
+EMAIL_MAX_PER_SENDER_PER_HOUR=20
+EMAIL_POLL_INTERVAL_SECONDS=300
+
+# Pipeline Configuration
+DISCOVERY_INTERVAL_SECONDS=60
+DPP_FIT_THRESHOLD=6
+```
+
+Notes:
+
+- `EMAIL_SENDER_ADDRESSES` is a comma-separated list used for round-robin sending.
+- SMTP authentication currently logs in with the sender email address and one shared `EMAIL_SMTP_PASSWORD`.
+- `RAPIDAPI_KEY` is optional. If it is missing, the pipeline still runs but skips LinkedIn profile enrichment.
+- `DPP_FIT_THRESHOLD` controls which companies move from enrichment to people discovery.
+- `DISCOVERY_INTERVAL_SECONDS` controls how often the discovery layer generates a new batch of search queries.
 
 ## Usage
 
-**Run the full pipeline** (all 4 layers in parallel):
+Run the full four-layer pipeline:
 
 ```sh
 python main.py
 ```
 
-**Run a single layer** (for testing):
+Run one layer only:
 
 ```sh
 python main.py --layer discovery
@@ -77,57 +153,97 @@ python main.py --layer people
 python main.py --layer email
 ```
 
-**Run the email sender** (sends approved emails from Notion):
+Run the email sender:
 
 ```sh
 python main.py --send-emails
 ```
 
-Press `Ctrl+C` to stop gracefully. The system finishes its current work item before shutting down.
+Create the Notion databases:
 
-## Email Workflow
+```sh
+python main.py --setup
+```
 
-1. Layer 4 generates emails and writes them to the Notion Emails database with status **Pending Review**
-2. A team member reviews each email in Notion and changes the status to **Approved** or **Rejected**
-3. The email sender (`--send-emails`) picks up approved emails, sends them via SMTP with domain rotation, and updates the status to **Sent**
+Use `Ctrl+C` to stop gracefully. The orchestrator sets a shutdown event and lets the active work item finish before exiting.
 
-Email sending is configured through environment variables:
-- `EMAIL_SENDER_ADDRESSES`: Comma-separated list of sender addresses for rotation
-- `EMAIL_DELAY_SECONDS`: Wait time between sends (default 15s)
-- `EMAIL_MAX_PER_SENDER_PER_HOUR`: Per-address hourly limit (default 20)
+## Workflow In Notion
+
+### Company statuses
+
+- `Discovered`: created by the discovery layer
+- `Enriched`: passed DPP scoring and is ready for people discovery
+- `Low Fit`: filtered out by the enrichment layer
+- `Contacts Found`: at least one decision-maker was found and stored
+- `Email Drafted`: an outreach draft exists in the email database
+- `Email Sent`: an approved email was sent successfully
+
+### Email statuses
+
+- `Pending Review`: created by the email generation layer
+- `Approved`: ready for sending
+- `Rejected`: manually rejected in Notion
+- `Sent`: marked after successful SMTP delivery
+
+Typical flow:
+
+1. Run `python main.py` to keep discovery, enrichment, contact research, and draft generation moving.
+2. Review generated drafts in the `Outreach Emails` database.
+3. Change selected drafts from `Pending Review` to `Approved`.
+4. Run `python main.py --send-emails` in a separate process to send approved emails.
+
+## Recovery Behavior
+
+The system is designed to resume from Notion state on startup:
+
+- discovery re-queues companies with status `Discovered`
+- enrichment re-queues companies with status `Discovered`
+- people re-queues companies with status `Enriched`
+- email generation re-queues contacts reconstructed from companies with status `Contacts Found`
+
+That means you can restart the process or run a single layer without losing all progress, as long as the required records already exist in Notion.
 
 ## Project Structure
 
-```
-main.py                          Entry point with CLI argument handling
-setup_notion.py                  One-time Notion database creation
+```text
+main.py
+setup_notion.py
 src/
-  orchestrator.py                Thread management and pipeline coordination
-  state.py                       Pydantic data models (CompanyRecord, ContactRecord, EmailRecord)
-  structured_outputs.py          LLM structured output schemas
-  utils.py                       LLM invocation, logging helpers
-  prompts/                       All system prompts (discovery, enrichment, people, email)
+  orchestrator.py
+  state.py
+  structured_outputs.py
+  utils.py
+  prompts/
+    discovery.py
+    enrichment.py
+    people.py
+    email.py
   layers/
-    discovery.py                 Layer 1: Company discovery via search
-    enrichment.py                Layer 2: Website scraping, data enrichment, DPP scoring
-    people.py                    Layer 3: Contact discovery and LinkedIn enrichment
-    email_generation.py          Layer 4: Personalized email generation
-  email/
-    sender.py                    Bulk email sending with domain rotation
-    smtp_client.py               SMTP connection wrapper
+    discovery.py
+    enrichment.py
+    people.py
+    email_generation.py
   tools/
-    notion.py                    Notion API client (CRUD, queries, rate limiting)
-    search.py                    Serper API (web search and news search)
-    web_scraper.py               Website scraping to markdown
-    linkedin.py                  LinkedIn profile scraping via RapidAPI
+    notion.py
+    search.py
+    web_scraper.py
+    linkedin.py
+  email/
+    smtp_client.py
+    sender.py
 ```
 
-## Configuration
+## Implementation Notes
 
-All configuration is done through environment variables in `.env`. See `.env.example` for the complete list including:
-- AI model keys (Gemini)
-- Serper API key (web search)
-- Notion API key and database IDs
-- LinkedIn scraping (RapidAPI) key
-- SMTP email sending configuration
-- Pipeline tuning (discovery interval, DPP fit threshold)
+- The pipeline uses in-memory queues between layers during a live run.
+- Notion is the durable system of record used for restart and recovery.
+- Website content and generated text written to Notion are trimmed to fit Notion property limits in several places.
+- The default LLM path is Gemini via `langchain_google_genai`.
+- Search is implemented through Serper's Google Search and News APIs.
+
+## Troubleshooting
+
+- If nothing is being discovered, verify `GOOGLE_API_KEY` and `SERPER_API_KEY`.
+- If Notion operations fail, make sure the integration has access to the parent page and both databases.
+- If emails are generated but never sent, confirm the email record status is `Approved` and the SMTP settings are valid.
+- If SMTP authentication fails for rotated senders, confirm all sender addresses can authenticate with the configured shared password.
