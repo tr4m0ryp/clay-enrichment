@@ -22,9 +22,12 @@ class Config:
     model_contact_extraction: str = "gemini-2.5-flash-lite"
     model_email_generation: str = "gemini-2.5-flash"
 
-    # Google Search
+    # Google Search (legacy, deprecated)
     google_api_key: str = ""
     google_cse_id: str = ""
+
+    # SearXNG (self-hosted meta-search)
+    searxng_url: str = "http://localhost:8888"
 
     # Notion
     notion_api_key: str = ""
@@ -71,6 +74,7 @@ def _load_config() -> Config:
         model_email_generation=os.environ.get("MODEL_EMAIL_GENERATION", "gemini-2.5-flash").strip(),
         google_api_key=os.environ.get("GOOGLE_API_KEY", "").strip(),
         google_cse_id=os.environ.get("GOOGLE_CSE_ID", "").strip(),
+        searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888").strip(),
         notion_api_key=os.environ.get("NOTION_API_KEY", "").strip(),
         notion_hub_page_id=os.environ.get("NOTION_HUB_PAGE_ID", "").strip(),
         notion_campaigns_db_id=os.environ.get("NOTION_CAMPAIGNS_DB_ID", "").strip(),

@@ -21,7 +21,7 @@ from src.models.gemini import GeminiClient
 from src.notion.client import NotionClient
 from src.notion.setup import setup_databases
 from src.notion.databases import CampaignsDB, CompaniesDB, ContactsDB, EmailsDB
-from src.search.google_search import GoogleSearchClient
+from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
 from src.discovery.contact_finder import ContactFinder
 from src.discovery.email_permutation import EmailPermutator
@@ -96,7 +96,7 @@ def _log_startup_summary(config: Config) -> None:
                 config.model_scoring, config.model_contact_extraction,
                 config.model_email_generation)
     logger.info("Notion hub page: %s", config.notion_hub_page_id or "(not set)")
-    logger.info("Google CSE configured: %s", bool(config.google_api_key and config.google_cse_id))
+    logger.info("SearXNG URL: %s", config.searxng_url)
     logger.info("SMTP configured: %s (host=%s port=%d)",
                 bool(config.smtp_host), config.smtp_host or "(none)", config.smtp_port)
     logger.info("Senders configured: %d (daily limit %d per sender)",
@@ -178,7 +178,7 @@ async def main() -> None:
     # Core clients
     gemini = GeminiClient(config, rate_limiter)
     notion_client = NotionClient(rate_limiter=rate_limiter)
-    search_client = GoogleSearchClient(config, rate_limiter)
+    search_client = SearXNGClient(base_url=config.searxng_url)
     scraper = WebScraper()
 
     # Discovery utilities

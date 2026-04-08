@@ -2,9 +2,9 @@
 Layer 1: Company Discovery Worker.
 
 Continuous async loop that polls active campaigns from Notion, generates
-search queries via Gemini, runs Google Custom Search, extracts company
-names from results, and writes new companies to the Notion Companies DB
-with dedup.
+search queries via Gemini, runs searches via SearXNG (self-hosted meta-search),
+extracts company names from results, and writes new companies to the Notion
+Companies DB with dedup.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from src.notion.databases_campaigns import CampaignsDB
 from src.notion.databases_companies import CompaniesDB
 from src.notion.prop_helpers import extract_title, extract_rich_text
 from src.prompts.discovery import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
-from src.search.google_search import GoogleSearchClient
+from src.search.searxng import SearXNGClient
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,7 +36,7 @@ async def discovery_worker(
     config,
     gemini_client: GeminiClient,
     notion_clients: NotionClients,
-    search_client: GoogleSearchClient,
+    search_client: SearXNGClient,
 ) -> None:
     """Continuous discovery loop. Runs forever, polling for active campaigns."""
     while True:
@@ -70,7 +70,7 @@ async def discover_companies_for_campaign(
     config,
     gemini_client: GeminiClient,
     notion_clients: NotionClients,
-    search_client: GoogleSearchClient,
+    search_client: SearXNGClient,
 ) -> None:
     """Run the full discovery pipeline for a single campaign."""
     campaign_id = campaign["id"]
@@ -172,7 +172,7 @@ async def _generate_search_queries(
 
 
 async def _execute_searches(
-    search_client: GoogleSearchClient,
+    search_client: SearXNGClient,
     queries: list[str],
 ) -> list[dict]:
     """Execute all search queries and collect results as dicts."""
