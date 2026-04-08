@@ -1,4 +1,6 @@
+import ssl
 import aiohttp
+import certifi
 from dataclasses import dataclass
 
 from src.config import Config
@@ -36,7 +38,8 @@ class GoogleSearchClient:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as session:
                 async with session.get(_GOOGLE_CSE_URL, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
                         _logger.warning("google_search: HTTP %d for query=%r", resp.status, query)

@@ -38,7 +38,10 @@ class NotionClient:
                           is created with default limits.
         """
         cfg = get_config()
-        self._sdk = NotionSDKClient(auth=cfg.notion_api_key)
+        self._sdk = NotionSDKClient(
+            auth=cfg.notion_api_key,
+            notion_version="2022-06-28",
+        )
         self._limiter = rate_limiter or RateLimiter()
 
     async def _call(self, func: Any, **kwargs: Any) -> Any:
@@ -71,6 +74,8 @@ class NotionClient:
         Query a Notion database and return all matching pages.
 
         Handles pagination automatically, fetching all results.
+        Uses raw HTTP because the notion-client SDK removed
+        databases.query in recent versions.
 
         Args:
             database_id: The Notion database UUID.
@@ -81,23 +86,37 @@ class NotionClient:
         Returns:
             List of page objects matching the query.
         """
+        import httpx as _httpx
+
+        cfg = get_config()
+        headers = {
+            "Authorization": f"Bearer {cfg.notion_api_key}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+        }
+
         all_results: list[dict] = []
         has_more = True
         start_cursor = None
 
         while has_more:
-            kwargs: dict[str, Any] = {
-                "database_id": database_id,
-                "page_size": page_size,
-            }
+            await self._limiter.acquire(_RATE_LIMIT_KEY)
+            body: dict[str, Any] = {"page_size": page_size}
             if filter_obj:
-                kwargs["filter"] = filter_obj
+                body["filter"] = filter_obj
             if sorts:
-                kwargs["sorts"] = sorts
+                body["sorts"] = sorts
             if start_cursor:
-                kwargs["start_cursor"] = start_cursor
+                body["start_cursor"] = start_cursor
 
-            response = await self._call(self._sdk.databases.query, **kwargs)
+            resp = await asyncio.to_thread(
+                _httpx.post,
+                f"https://api.notion.com/v1/databases/{database_id}/query",
+                headers=headers,
+                json=body,
+            )
+            resp.raise_for_status()
+            response = resp.json()
             all_results.extend(response.get("results", []))
             has_more = response.get("has_more", False)
             start_cursor = response.get("next_cursor")
@@ -207,6 +226,9 @@ class NotionClient:
         """
         Create a new database as a child of a Notion page.
 
+        Uses raw HTTP because the notion-client SDK does not forward
+        the properties parameter correctly to the Notion API.
+
         Args:
             parent_page_id: The page UUID to create the database under.
             title: Human-readable title for the database.
@@ -215,12 +237,28 @@ class NotionClient:
         Returns:
             The created database object (includes the new database ID).
         """
-        result = await self._call(
-            self._sdk.databases.create,
-            parent={"type": "page_id", "page_id": parent_page_id},
-            title=[{"type": "text", "text": {"content": title}}],
-            properties=properties,
+        import httpx as _httpx
+
+        await self._limiter.acquire(_RATE_LIMIT_KEY)
+        cfg = get_config()
+        headers = {
+            "Authorization": f"Bearer {cfg.notion_api_key}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+        }
+        body = {
+            "parent": {"type": "page_id", "page_id": parent_page_id},
+            "title": [{"type": "text", "text": {"content": title}}],
+            "properties": properties,
+        }
+        resp = await asyncio.to_thread(
+            _httpx.post,
+            "https://api.notion.com/v1/databases",
+            headers=headers,
+            json=body,
         )
+        resp.raise_for_status()
+        result = resp.json()
         logger.info("create_database: created '%s' -> %s", title, result["id"])
         return result
 

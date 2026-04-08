@@ -40,10 +40,16 @@ class RateLimitConfig:
 
 # Default limits at 80% of stated API ceilings.
 DEFAULT_LIMITS: Dict[str, RateLimitConfig] = {
+    # Gemini models -- keys match the model names in .env config
+    "gemini-2.5-flash-lite": RateLimitConfig(ceiling=240, window_seconds=60.0),
+    "gemini-2.5-flash": RateLimitConfig(ceiling=120, window_seconds=60.0),
+    "gemini-2.5-pro": RateLimitConfig(ceiling=120, window_seconds=60.0),
+    # Legacy short names (for backward compat with tests)
     "gemini-flash-lite": RateLimitConfig(ceiling=240, window_seconds=60.0),
     "gemini-flash": RateLimitConfig(ceiling=120, window_seconds=60.0),
     "gemini-pro": RateLimitConfig(ceiling=120, window_seconds=60.0),
     "google-custom-search": RateLimitConfig(ceiling=80, window_seconds=86400.0, is_daily=True),
+    "google_search": RateLimitConfig(ceiling=80, window_seconds=86400.0, is_daily=True),
     "notion": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
 }
 
