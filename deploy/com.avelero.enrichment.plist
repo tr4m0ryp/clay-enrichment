@@ -4,32 +4,25 @@
 <dict>
     <key>Label</key>
     <string>com.avelero.enrichment</string>
-
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>/Users/macbookpro/projects/avelero/clay-enrichment/deploy/start.sh</string>
     </array>
-
-    <key>RunAtLoad</key>
-    <true/>
-
-    <key>KeepAlive</key>
-    <true/>
-
     <key>WorkingDirectory</key>
     <string>/Users/macbookpro/projects/avelero/clay-enrichment</string>
-
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
     <key>StandardOutPath</key>
     <string>/Users/macbookpro/projects/avelero/clay-enrichment/logs/stdout.log</string>
-
     <key>StandardErrorPath</key>
     <string>/Users/macbookpro/projects/avelero/clay-enrichment/logs/stderr.log</string>
-
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
