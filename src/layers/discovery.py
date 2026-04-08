@@ -16,7 +16,7 @@ from src.notion.databases_campaigns import CampaignsDB
 from src.notion.databases_companies import CompaniesDB
 from src.notion.prop_helpers import extract_title, extract_rich_text
 from src.prompts.discovery import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
-from src.search.searxng import SearXNGClient
+from typing import Any
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -36,7 +36,7 @@ async def discovery_worker(
     config,
     gemini_client: GeminiClient,
     notion_clients: NotionClients,
-    search_client: SearXNGClient,
+    search_client: Any,
 ) -> None:
     """Continuous discovery loop. Runs forever, polling for active campaigns."""
     while True:
@@ -70,7 +70,7 @@ async def discover_companies_for_campaign(
     config,
     gemini_client: GeminiClient,
     notion_clients: NotionClients,
-    search_client: SearXNGClient,
+    search_client: Any,
 ) -> None:
     """Run the full discovery pipeline for a single campaign."""
     campaign_id = campaign["id"]
@@ -172,7 +172,7 @@ async def _generate_search_queries(
 
 
 async def _execute_searches(
-    search_client: SearXNGClient,
+    search_client: Any,
     queries: list[str],
 ) -> list[dict]:
     """Execute all search queries and collect results as dicts."""

@@ -144,9 +144,9 @@ class ContactFinder:
         """
         contacts = []
         for result in results:
-            link = result.get("link", "")
-            title_text = result.get("title", "")
-            snippet = result.get("snippet", "")
+            link = getattr(result, "url", "") or (result.get("link", "") if isinstance(result, dict) else "")
+            title_text = getattr(result, "title", "") or (result.get("title", "") if isinstance(result, dict) else "")
+            snippet = getattr(result, "snippet", "") or (result.get("snippet", "") if isinstance(result, dict) else "")
 
             if "linkedin.com/in/" not in link:
                 continue
@@ -183,9 +183,9 @@ class ContactFinder:
         """
         contacts = []
         for result in results:
-            link = result.get("link", "")
-            title_text = result.get("title", "")
-            snippet = result.get("snippet", "")
+            link = getattr(result, "url", "") or (result.get("link", "") if isinstance(result, dict) else "")
+            title_text = getattr(result, "title", "") or (result.get("title", "") if isinstance(result, dict) else "")
+            snippet = getattr(result, "snippet", "") or (result.get("snippet", "") if isinstance(result, dict) else "")
 
             is_linkedin = "linkedin.com/in/" in link
             combined_text = f"{title_text} {snippet}"

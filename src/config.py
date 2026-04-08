@@ -29,6 +29,9 @@ class Config:
     # SearXNG (self-hosted meta-search)
     searxng_url: str = "http://localhost:8888"
 
+    # Brave Search API
+    brave_search_api_key: str = ""
+
     # Notion
     notion_api_key: str = ""
     notion_hub_page_id: str = ""
@@ -75,6 +78,7 @@ def _load_config() -> Config:
         google_api_key=os.environ.get("GOOGLE_API_KEY", "").strip(),
         google_cse_id=os.environ.get("GOOGLE_CSE_ID", "").strip(),
         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888").strip(),
+        brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
         notion_api_key=os.environ.get("NOTION_API_KEY", "").strip(),
         notion_hub_page_id=os.environ.get("NOTION_HUB_PAGE_ID", "").strip(),
         notion_campaigns_db_id=os.environ.get("NOTION_CAMPAIGNS_DB_ID", "").strip(),

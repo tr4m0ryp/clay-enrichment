@@ -21,6 +21,7 @@ from src.models.gemini import GeminiClient
 from src.notion.client import NotionClient
 from src.notion.setup import setup_databases
 from src.notion.databases import CampaignsDB, CompaniesDB, ContactsDB, EmailsDB
+from src.search.brave_search import BraveSearchClient
 from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
 from src.discovery.contact_finder import ContactFinder
@@ -178,7 +179,12 @@ async def main() -> None:
     # Core clients
     gemini = GeminiClient(config, rate_limiter)
     notion_client = NotionClient(rate_limiter=rate_limiter)
-    search_client = SearXNGClient(base_url=config.searxng_url)
+    if config.brave_search_api_key:
+        search_client = BraveSearchClient(api_key=config.brave_search_api_key)
+        logger.info("Using Brave Search API")
+    else:
+        search_client = SearXNGClient(base_url=config.searxng_url)
+        logger.info("Using SearXNG at %s", config.searxng_url)
     scraper = WebScraper()
 
     # Discovery utilities
