@@ -12,7 +12,6 @@ import asyncio
 import logging
 import signal
 import sys
-from dataclasses import dataclass
 from types import SimpleNamespace
 
 from src.config import get_config, Config

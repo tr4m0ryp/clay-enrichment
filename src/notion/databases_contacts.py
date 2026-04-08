@@ -21,7 +21,6 @@ from src.notion.prop_helpers import (
     url_prop,
     checkbox_prop,
     relation_prop,
-    extract_email,
 )
 
 logger = logging.getLogger(__name__)

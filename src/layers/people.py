@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from src.discovery.contact_finder import ContactFinder
 from src.discovery.email_permutation import EmailPermutator
-from src.discovery.smtp_verify import SMTPVerifier, VerifyResult
+from src.discovery.smtp_verify import SMTPVerifier
 from src.models.gemini import GeminiClient
 from src.notion.databases_companies import CompaniesDB
 from src.notion.databases_contacts import ContactsDB
@@ -23,7 +23,6 @@ from src.notion.prop_helpers import (
     extract_title,
     extract_url,
     extract_relation_ids,
-    rich_text_prop,
     select_prop,
 )
 from src.prompts.people import PARSE_CONTACT_RESULTS

@@ -9,7 +9,6 @@ with dedup.
 
 import asyncio
 import json
-import logging
 from dataclasses import dataclass
 
 from src.models.gemini import GeminiClient

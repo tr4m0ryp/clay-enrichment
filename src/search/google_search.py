@@ -25,7 +25,7 @@ class GoogleSearchClient:
 
     async def search(self, query: str, num_results: int = 10) -> list[SearchResult]:
         """Google Custom Search JSON API v1 via aiohttp."""
-        await self._rate_limiter.acquire("google_search")
+        await self._rate_limiter.acquire("google-custom-search")
         _logger.info("google_search: query=%r num=%d", query, num_results)
 
         params = {
