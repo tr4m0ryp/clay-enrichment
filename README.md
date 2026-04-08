@@ -1,161 +1,197 @@
-# AI-Sales-Outreach-Automation
+# Clay Enrichment: Automated Lead Discovery and Outreach for Avelero
 
-### 👉 Dive into the full article: [**AI Agents + LangGraph: The Winning Formula for Sales Outreach Automation**](https://dev.to/kaymen99/how-ai-automation-can-transform-your-sales-outreach-strategy-aop)  
+## Overview
 
-![outreach-automation](https://github.com/user-attachments/assets/2685ef70-ab9f-4177-9b2a-71086f79726b)
+Fashion brands face mandatory EU Digital Product Passport (DPP) compliance starting mid-2027, with vendor selection needing to happen in 2026 given 6-10 month lead times. Avelero provides a DPP platform that lets brands launch compliant digital passports in days. The challenge: finding and reaching the right brands at the right time, at scale.
 
-I built an **AI-powered outreach system** designed to integrate with multiple **CRMs**, automate lead research, and enhance the lead generation process. The system analyzes **LinkedIn data**, company websites, recent news, and social media activities to gather comprehensive insights on potential leads. Based on this information, it generates detailed **analysis reports** that highlight lead challenges, gaps, and opportunities for engagement.
+Clay Enrichment is Avelero's automated lead discovery, enrichment, and outreach pipeline. It continuously discovers fashion, streetwear, and lifestyle brands that would benefit from DPP, enriches company and contact data, generates personalized outreach emails, and manages the sending process -- all from a single Notion dashboard.
 
-The system also creates customized **outreach materials**, including **personalized emails**, **interview preparation scripts**, and **tailored outreach reports** that showcase how our solutions can address the lead's pain points, supported by previous results and case studies.
+The system runs four independent async workers in parallel. No worker waits for another. Each picks up items as they become available, processes them, and writes results back to Notion. The pipeline moves companies from discovery through enrichment, contact finding, email generation, human review, and sending.
 
-For this project, I created a sample AI marketing agency, **ElevateAI Marketing Solutions**, which focuses on optimizing and automating content strategies and enhancing digital presence using AI.
+## Core Architecture
 
-While designed for **ElevateAI**, this system can easily be adapted for any agency or freelancer looking to streamline their lead outreach and improve engagement with prospects. With its customizable features, it offers a powerful, automated approach to lead generation.
+```
++---------------------+     +---------------------+     +---------------------+
+|  Layer 1: Discovery |     |  Layer 2: Enrichment|     |  Layer 3: People    |
+|  - Gemini generates |     |  - Scrapes websites |     |  - Google search    |
+|    search queries   |---->|  - AI enrichment    |---->|  - Email permutation|
+|  - Google CSE runs  |     |  - DPP fit scoring  |     |  - SMTP verification|
+|    searches         |     |  - Notion update    |     |  - Notion contacts  |
++---------------------+     +---------------------+     +---------------------+
+                                                                    |
+                                                                    v
+                         +---------------------+     +---------------------+
+                         |  Email Sender        |<----|  Layer 4: Email Gen |
+                         |  - SMTP rotation     |     |  - Personalized     |
+                         |  - 3-8 min delays    |     |    outreach emails  |
+                         |  - 10/day/sender     |     |  - Pending Review   |
+                         |  - 15% fail stop     |     |    in Notion        |
+                         +---------------------+     +---------------------+
+```
 
-## Features
+All layers run continuously as `asyncio` coroutines. A supervisor restarts any crashed worker after 30 seconds. Graceful shutdown on SIGINT/SIGTERM.
 
-### **Multi-CRM Integration**
-- Seamlessly connect with popular CRMs like **HubSpot**, **Airtable**, **Google Sheets**, or add your own custom CRM functionality using a standardized schema.
+## How It Works
 
-### **Automated Lead Research**
-- **LinkedIn Profile Scraping**: Automatically collect essential details about the lead and their company from LinkedIn to create a comprehensive profile.  
-- **Company Digital Presence Analysis**: Evaluate the company's website and blog content for insights into their products and services. Additionally, assess their social media activity across platforms like **Facebook**, **Twitter**, **YouTube**, and others.  
-- **Recent Company News Analysis**: Keep track of the latest news and announcements related to the company to gain insights into their current initiatives and challenges.  
-- **Pain Point Identification**: Identify potential challenges or gaps faced by the company, and provide tailored recommendations on how your agency's offerings and services can address them.  
-- **Report Generation**: Generate detailed reports for each analysis, which are saved both locally and in **Google Docs**. A consolidated global research report is created, combining insights from the lead profile, company profile, and digital presence. (You can find examples of the reports in the `/reports` folder.)  
+**1. Campaign-Driven Discovery** -- Create a campaign in Notion with a natural language target description (e.g., "Find EU streetwear brands with sustainability initiatives"). Gemini generates 10-20 search queries per cycle. Google Custom Search executes them. Gemini parses results into company names. New companies are deduplicated and written to the Companies database.
 
-### **Lead Qualification**
-Automatically assess and qualify leads based on the gathered data and your predefined criteria, here are some examples of criteria that I used:
-- **Digital Presence (Website & Blog)**: Evaluate the quality and relevance of the company’s online presence.
-- **Social Media Activity**: Analyze the company’s engagement and activity across various social media platforms.
-- **Industry Fit**: Assess how well the company aligns with your target industries and their current or potential use of **AI** and **automation** in marketing.
-- **Company Scale and Potential**: Evaluate the company’s size, growth potential, and market expansion indicators such as new hires or funding.
+**2. Single-Pass Enrichment** -- Companies with status "Discovered" are scraped (with fallback to alternative sources if the main site fails). Scraped content is sent to Gemini in batches of 3 for single-pass enrichment: company profile, industry classification, and DPP fit scoring (1-10) based on six criteria specific to Avelero's market. Full enrichment reports are stored in Notion page bodies.
 
-*Note: These criteria can be modified according to specific requirements.*
+**3. Contact Discovery** -- Enriched companies trigger a Google-based people search. Contacts are found without LinkedIn scraping -- the system searches for employees via `site:linkedin.com/in` queries, generates email permutations from name + domain, and verifies addresses via SMTP/MX checks. Verified contacts are created in Notion.
 
-### **Personalized Outreach**
-- **Customized Outreach Report**: Generate a customized outreach report for each lead, highlighting their challenges or gaps, how your services can address them, and referencing previously obtained results and similar case studies (uses RAG to extract them). The report is saved to **Google Docs** for easy sharing.
-- **Create Personalized Email**: Craft personalized email templates, including a link to the custom outreach report, to engage qualified leads effectively.
-- **Prepare Personalized Interview Script**: Generate a tailored interview script, complete with **SPIN** questions, to help prepare for calls with leads and ensure productive conversations.
+**4. Email Generation and Review** -- Contacts trigger personalized email generation using company context, contact profile, and campaign targeting. Emails land in Notion with "Pending Review" status. A team member reviews and sets status to "Approved" or "Rejected". Only approved emails are sent.
 
-### **Efficient Workflow**
-- **Seamless Collaboration**: all generated research and outreach reports are saved both locally and in **Google Docs**, ensuring easy access and collaboration across teams.
-- **Automated CRM Updates**: Keep your CRM up to date with the latest lead status and links to generated reports, streamlining your outreach efforts.
+**5. Sending with Safety Rails** -- The sender polls for approved emails, sends via SMTP with round-robin sender rotation, randomized 3-8 minute delays, 10 emails/day/sender limit, and a 15% fail-rate hard stop.
 
-## System Workflow
+## Notion Dashboard
 
-The system follows the process to manage lead research and outreach efficiently (check the detailed workflow description [here](https://github.com/kaymen99/sales-outreach-automation-langgraph/tree/main/docs/system-workflow.md) and a visual diagram [here](https://github.com/kaymen99/sales-outreach-automation-langgraph/blob/main/workflow.png)):
+The system is managed entirely from a single Notion page -- the **Avelero Outreach Hub** -- containing linked views from four databases:
 
-1. **Fetch Leads**: Connect to your CRM to fetch new leads.
-2. **Research & Insights**:
-   - Gather and analyze key information for each lead:
-     - Scrape **LinkedIn profiles**.
-     - Analyze **company digital presence** (website, blogs, social media, recent news).
-   - Generate detailed analysis reports for each lead combining insights from all previous research. (You can find examples of the reports in the `/reports` folder.)  
-3. **Lead Qualification**: Evaluate each lead based on specific criteria such as **digital presence**, **social media activity**, **industry fit**, or **company scale**.
-4. **Outreach Preparation**: For qualified leads, generate personalized outreach materials:
-     - A **customized outreach report** detailing identified challenges faced by the company and how our services can address them, the system will use RAG to fetch similar case studies (from our internal knowledge base) to be referenced in the report.
-     - A **personalized email** tailored to the lead with a link to the outreach report.
-     - A **customized interview script** to prepare for calls with leads.
-5. **Update CRM**: All generated research and outreach materials are saved locally and to **Google Docs**, and the CRM is updated with the latest lead status and links to the reports.
+| Database | Purpose | Key Status Flow |
+|----------|---------|----------------|
+| **Campaigns** | Define what to search for | Active / Paused / Completed |
+| **Companies** | Discovered and enriched companies | Discovered -> Enriched -> Contacts Found |
+| **Contacts** | People at target companies | Found -> Enriched -> Email Generated |
+| **Emails** | Generated outreach with review | Pending Review -> Approved -> Sent |
 
+Relations connect everything: Campaign -> Companies -> Contacts -> Emails. Navigate in any direction. Filter by campaign, status, score, or date.
 
-### Advantages of This automation
+## Quick Start
 
-- **Automated Lead Research & Qualification**: The system streamlines lead research by gathering insights from LinkedIn, company websites, social media, and more. It ensures every lead is thoroughly evaluated based on criteria tailored to your agency’s needs.
+<details>
+<summary>Prerequisites</summary>
 
-- **Increased Outreach Reply Rates & Conversions**: Instead of sending a simple standalone email, the system generates a detailed audit report for each lead, attached to the email. These reports demonstrate that you’ve thoroughly researched their business, identified key challenges, and can provide tailored solutions, supported by relevant case studies. This approach increases the likelihood of positive responses, boosting your outreach reply rates and conversions.
+- Python 3.10+
+- Gemini API key (paid tier)
+- Google Custom Search API key + engine ID
+- Notion integration token
+- A Notion page shared with the integration
 
-- **Time-Saving & Optimized Team Efficiency**: By automating lead research and generating reports with valuable insights, challenges, and recommendations, the system saves time and enhances teamwork. It provides a prepared interview script to help your team engage clients effectively during calls, and the comprehensive reports enable them to quickly craft and present tailored solutions to potential clients.
-
-
-## Integration with APIs
-
-- **Airtable CRM**: To integrate with your Airtable contacts CRM, you must [sign up](https://www.airtable.com/) for an Airtable account and create your own contacts database with the relevant fields.
-- **HubSpot CRM**: To integrate with your HubSpot contacts CRM, sign up for a [HubSpot account](https://www.hubspot.com/), then create a private app and obtain your API key. [Follow this tutorial](https://www.youtube.com/watch?v=hSipSbiwc2s) for guidance.
-- **LinkedIn Data**: Scrape profile information using the **RapidAPI LinkedIn Profile Data API**. [Get your API key here](https://rapidapi.com/freshdata-freshdata-default/api/fresh-linkedin-profile-data).
-- **Google APIs**: Used to access **Google Docs**, **Google Sheets** (needed only when used as CRM source), and **Gmail**. Follow [this guide](https://developers.google.com/gmail/api/quickstart/python) and ensure all required APIs are enabled.
-- **Google Searches**: Perform web searches using the **Serper API**. [Get your API key here](https://serper.dev).
-- **LLM**: Leverages **Google Gemini LLM models** (Flash and Pro) and their Embedding model. [Get your API key here](https://ai.google.dev/gemini-api/docs/api-key).
-
-## Tech Stack
-
-- **[Langchain](https://python.langchain.com/docs/introduction/)**: Framework for interacting with multiple LLMs like GPT-4, Gemini, LLAMA3 and building AI agents and RAG applications.
-- **[Langgraph](https://langchain-ai.github.io/langgraph/)**: Framework for building AI agents and automation workflows.
-
-## How to Run
-
-### Prerequisites
-
-- Python 3.9+
-- Google Gemini API key (or choose other LLM providers like OpenAI or Groq).
-- Google APIs credentials.
-- API keys for integrated tools (RapidAPI, Serper API).
-- API keys and configurations for your chosen CRM (check `.env.example` for more information).
-- Necessary Python libraries (listed in `requirements.txt`).
+</details>
 
 ### Setup
 
-1. **Clone the repository:**
-
-   ```sh
-   git clone https://github.com/kaymen99/sales-outreach-automation-langgraph.git
-   cd sales-outreach-automation-langgraph
-   ```
-
-2. **Create and activate a virtual environment:**
-
-   ```sh
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-   ```
-
-3. **Install dependencies:**
-
-   ```sh
-   pip install -r requirements.txt
-   ```
-
-4. **Set up environment variables:**
-
-   Create a copy of the `.env.example` file:
-
-   ```bash
-   cp .env.example .env
-   ```
-
-   After running this command, open the new `.env` file and add your API keys as needed.
-
----
-
-### Start the Application
-
-Run the main script to begin automation:
-
-```sh
-python main.py
+```bash
+git clone https://github.com/tr4m0ryp/clay-enrichment.git
+cd clay-enrichment
+pip install -r requirements.txt
+cp .env.example .env
 ```
 
-The system will connect with your CRM to fetch new leads, perform automated research, qualify leads, and generate personalized outreach materials (You can see examples of reports generated, including the personalized email in the `/reports` folder).
+Edit `.env` with your API keys:
 
----
+```bash
+GEMINI_API_KEY="your-gemini-key"
+GOOGLE_API_KEY="your-google-api-key"
+GOOGLE_CSE_ID="your-search-engine-id"
+NOTION_API_KEY="your-notion-token"
+NOTION_HUB_PAGE_ID="your-notion-page-id"
+```
 
-### Customizing the Automation
+### First Run
 
-For developers who wish to integrate their own CRM or customize the behavior of the automation, please refer to the [Customization Guide](./docs/customization.md). The guide covers:
+The system auto-creates the four Notion databases on first launch:
 
-- **Add your own service/product data**: The `/data` folder includes agency details and past case studies used in reports, emails, and interviews generation. You should update these files to reflect your own service/product details and your past case studies.
-- **Integrating Custom CRMs**: Instructions for adding your CRM to the system by extending the base class.
-- **Customizing Lead Statuses**: Learn how to modify the statuses used to filter and fetch leads.
-- **Updating CRM Fields**: Tailor the functions in the `OutReachAutomationNodes` class to handle different CRM field names or additional fields.
-- **Customizing Prompts**: Update the prompts used for qualifying leads, generating reports, personalizing emails, and preparing interview questions.
+```bash
+python3 -m src.main
+```
 
----
+Copy the printed database IDs into your `.env`, then restart. Create a campaign in the Campaigns database with status "Active" and a target description. The pipeline starts automatically.
 
-## Contributing
+### Deployment (Mac Mini)
 
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or features you’d like to see.
+```bash
+chmod +x deploy/install-service.sh
+./deploy/install-service.sh
+```
 
-## Contact
+This installs a `launchd` service that auto-starts on boot and restarts on crash.
 
-For questions or suggestions, contact me at `aymenMir1001@gmail.com`.
+## Technical Details
+
+### Module Breakdown
+
+| Module | Files | Responsibility |
+|--------|-------|---------------|
+| `src/config.py` | 1 | Environment loading, typed config, sender auto-discovery |
+| `src/models/` | 1 | Gemini API client (google-genai SDK), batch support, rate limiting |
+| `src/notion/` | 7 | Notion CRUD for all 4 databases, page body management, auto-setup, dedup |
+| `src/search/` | 2 | Google Custom Search client, website scraper with fallback |
+| `src/discovery/` | 3 | Contact finder, email permutation (8 patterns), SMTP verification |
+| `src/prompts/` | 5 | Avelero context layer + task-specific prompts for all 4 layers |
+| `src/layers/` | 4 | Async worker loops for discovery, enrichment, people, email generation |
+| `src/email/` | 2 | SMTP sender pool with rotation, delays, and safety rails |
+| `src/main.py` | 1 | Orchestrator, supervised workers, graceful shutdown |
+
+### Model Strategy
+
+Benchmarked across Gemini 2.5 Flash-Lite, Flash, and Pro. Results:
+
+| Task | Model | Why |
+|------|-------|-----|
+| Discovery queries | Flash-Lite | High volume, extraction work. 5x faster than Flash. |
+| Company enrichment | Flash-Lite | Structured JSON output. Score quality 8/10 vs Flash 9/10. |
+| Contact parsing | Flash-Lite | Pattern extraction from search results. |
+| Email generation | Flash | Writing quality matters. Marginal but worthwhile improvement. |
+
+Single-pass enrichment (one LLM call instead of chained reports) saves **64% of tokens**. Batching 3 companies per call saves an additional **29%**.
+
+### Rate Limiting
+
+Proactive sliding-window rate limiter prevents all 429 errors by checking capacity before every API call:
+
+| API | Stated Limit | System Ceiling (80%) |
+|-----|-------------|---------------------|
+| Gemini Flash-Lite | 300 RPM | 240 RPM |
+| Gemini Flash/Pro | 150 RPM | 120 RPM |
+| Google Custom Search | 100/day | 80/day |
+| Notion API | 3 req/sec | 2.5 req/sec |
+
+### Email Safety
+
+| Parameter | Value |
+|-----------|-------|
+| Daily limit per sender | 10 (configurable) |
+| Delay between sends | 3-8 minutes, randomized with +/-20% jitter |
+| Fail-rate threshold | 15% triggers hard stop |
+| Sending window | Business hours only (Mon-Fri 8-18) |
+| Required DNS | SPF, DKIM, DMARC (mandatory since March 2026) |
+
+### Contact Discovery (No LinkedIn Scraping)
+
+Instead of unreliable LinkedIn scraping via RapidAPI, the system uses a three-step waterfall:
+
+1. **Find people** -- Google Custom Search with `site:linkedin.com/in` queries
+2. **Generate emails** -- 8 permutation patterns from name + domain
+3. **Verify** -- SMTP/MX RCPT TO check (free, no third-party dependency)
+
+### Configuration
+
+All settings live in `.env`. Key tuning parameters:
+
+```bash
+MODEL_DISCOVERY="gemini-2.5-flash-lite"     # Model per task (swappable)
+MODEL_EMAIL_GENERATION="gemini-2.5-flash"
+EMAIL_DAILY_LIMIT_PER_SENDER=10             # Emails/day/mailbox
+EMAIL_MIN_DELAY_SECONDS=180                 # Min delay between sends (3 min)
+EMAIL_MAX_DELAY_SECONDS=480                 # Max delay (8 min)
+ENRICHMENT_STALE_DAYS=90                    # Re-enrich after N days
+SENDER_1_EMAIL="outreach1@avelero.com"      # Add as many SENDER_N_ as needed
+SENDER_1_PASSWORD="app-password"
+```
+
+## Roadmap
+
+- [ ] Migrate from Google Custom Search to Vertex AI Search (CSE deprecated for new customers, deadline Jan 2027)
+- [ ] Playwright-based screenshots for documentation
+- [ ] CrossLinked integration for employee enumeration without search API
+- [ ] Campaign analytics dashboard in Notion (rollup metrics)
+- [ ] Webhook-based email approval (faster than polling)
+
+## Disclaimer
+
+This system is designed for legitimate business outreach. It does not scrape LinkedIn directly, does not bypass authentication, and respects email sending limits to avoid spam classification. The email sender is disabled by default until SMTP credentials are configured. Always ensure SPF, DKIM, and DMARC are properly configured before sending. Comply with GDPR and applicable regulations when processing personal contact data.
+
+## License
+
+Internal tool for Avelero. Not licensed for external distribution.
