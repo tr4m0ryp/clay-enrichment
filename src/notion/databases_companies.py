@@ -194,7 +194,7 @@ class CompaniesDB:
 
         properties = {
             "Name": title_prop(name),
-            "Website": url_prop(website) if website else url_prop(""),
+            "Website": url_prop(website or ""),
             "Industry": select_prop(industry),
             "Location": rich_text_prop(location),
             "Size": rich_text_prop(size),

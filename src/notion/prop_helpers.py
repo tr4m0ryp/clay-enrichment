@@ -70,7 +70,7 @@ def url_prop(value: str) -> dict:
     Returns:
         Notion property dict for a url field.
     """
-    return {"url": value}
+    return {"url": value if value else None}
 
 
 def email_prop(value: str) -> dict:
