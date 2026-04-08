@@ -325,7 +325,7 @@ async def discover_contacts_for_company(
                 first_name, last_name = _split_name(name)
                 permutations = email_permutator.generate(
                     first_name, last_name, domain
-                )
+                )[:3]  # Top 3 patterns only for speed
                 if permutations:
                     email, email_verified = await _verify_email_waterfall(
                         smtp_verifier, permutations

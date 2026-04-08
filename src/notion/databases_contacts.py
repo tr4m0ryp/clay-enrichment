@@ -123,7 +123,7 @@ class ContactsDB:
         properties: dict = {
             "Name": title_prop(name),
             "Job Title": rich_text_prop(job_title),
-            "Status": select_prop("Found"),
+            "Status": select_prop("Enriched"),
             "Company": relation_prop([company_id]),
             "Campaign": relation_prop([campaign_id]),
         }

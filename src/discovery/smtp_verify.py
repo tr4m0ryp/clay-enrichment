@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_SMTP_TIMEOUT = 10
+_SMTP_TIMEOUT = 3
 _RATE_LIMIT_INTERVAL = 1.0  # seconds between checks per domain
 _HELO_DOMAIN = "verify.localhost"
 _MAIL_FROM = "verify@localhost"
