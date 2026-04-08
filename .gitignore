@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+database/
+reports/
+notes/
+tasks/
+tests/model_benchmark*.py
+logs/
+.claude/
+*.key
+*.pem
+.DS_Store
