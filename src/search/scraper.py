@@ -1,5 +1,7 @@
 import re
+import ssl
 import aiohttp
+import certifi
 from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
@@ -42,7 +44,8 @@ class WebScraper:
             "Accept-Encoding": "gzip, deflate",
         }
         try:
-            async with aiohttp.ClientSession(headers=headers) as session:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            async with aiohttp.ClientSession(headers=headers, connector=aiohttp.TCPConnector(ssl=ssl_ctx)) as session:
                 async with session.get(url, timeout=_TIMEOUT, allow_redirects=True) as resp:
                     if resp.status in (403, 404):
                         _logger.warning("scraper: %d for %s", resp.status, url)
