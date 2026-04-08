@@ -17,13 +17,9 @@ from src.notion.prop_helpers import (
     title_prop,
     rich_text_prop,
     select_prop,
-    number_prop,
     url_prop,
-    date_prop,
     relation_prop,
-    extract_title,
     extract_select,
-    extract_url,
     extract_date,
     extract_relation_ids,
 )

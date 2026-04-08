@@ -15,8 +15,6 @@ from src.notion.prop_helpers import (
     rich_text_prop,
     select_prop,
     date_prop,
-    extract_title,
-    extract_select,
 )
 
 logger = logging.getLogger(__name__)

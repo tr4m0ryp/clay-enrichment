@@ -6,7 +6,6 @@ keeping the per-database modules DRY.
 """
 
 from datetime import datetime, timezone
-from typing import Any
 
 
 def title_prop(text: str) -> dict:

@@ -1,6 +1,6 @@
 import re
 import aiohttp
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from bs4 import BeautifulSoup
 
 from src.utils.logger import get_logger

@@ -17,7 +17,7 @@ def scrape_website_to_markdown(url: str) -> str:
 
     # Parse the HTML
     soup = BeautifulSoup(response.text, "html.parser")
-    html_content = soup.prettify() 
+    html_content = soup.prettify()
 
     # Convert HTML to markdown
     h = html2text.HTML2Text()

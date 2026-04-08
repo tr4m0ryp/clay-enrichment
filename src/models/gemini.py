@@ -1,6 +1,4 @@
-import asyncio
 import json
-import logging
 import time
 
 from google import genai

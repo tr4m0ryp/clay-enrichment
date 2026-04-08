@@ -10,7 +10,7 @@ import asyncio
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Dict
 
@@ -142,7 +142,7 @@ class RateLimiter:
         if api_name not in self._limits:
             raise KeyError(f"Unknown API: {api_name!r}. Known APIs: {list(self._limits)}")
 
-        now = time.monotonic() if False else time.time()
+        now = time.time()
         cfg = self._limits[api_name]
         self._purge_expired(api_name, now)
         return len(self._buckets[api_name]) < cfg.ceiling

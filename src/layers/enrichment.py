@@ -8,10 +8,8 @@ to Notion (properties + page body report).
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
-from dataclasses import dataclass
 from typing import Any
 
 from src.notion.prop_helpers import (
