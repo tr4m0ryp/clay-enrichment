@@ -13,3 +13,4 @@ logs/
 *.key
 *.pem
 .DS_Store
+CLAUDE.md
