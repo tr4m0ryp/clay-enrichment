@@ -74,25 +74,23 @@ def _build_enrichment_blocks(result: dict) -> list[dict]:
 
     blocks.append(_heading("Enrichment Report"))
 
-    # Key facts section
-    blocks.append(_heading("Company Profile"))
-    facts = [
-        f"Industry: {result.get('industry', 'Unknown')}",
-        f"Location: {result.get('location', 'Unknown')}",
-        f"Size: {result.get('size', 'Unknown')}",
-        f"Products: {', '.join(result.get('products', []))}",
-        f"Sustainability Focus: {result.get('sustainability_focus', False)}",
-        f"Premium Positioning: {result.get('premium_positioning', False)}",
-    ]
-    for fact in facts:
-        blocks.append(_bullet(fact))
+    # Company details not stored as properties
+    products = result.get("products", [])
+    sustainability = result.get("sustainability_focus", False)
+    premium = result.get("premium_positioning", False)
+    if products or sustainability or premium:
+        blocks.append(_heading("Company Profile"))
+        if products:
+            blocks.append(_bullet(f"Products: {', '.join(products)}"))
+        if sustainability:
+            blocks.append(_bullet("Sustainability Focus: Yes"))
+        if premium:
+            blocks.append(_bullet("Premium Positioning: Yes"))
 
-    # DPP scoring section
-    blocks.append(_heading("DPP Fit Assessment"))
-    score = result.get("dpp_fit_score", "N/A")
+    # DPP fit reasoning (score itself is stored as a property)
     reasoning = result.get("dpp_fit_reasoning", "")
-    blocks.append(_paragraph(f"Score: {score}/10"))
     if reasoning:
+        blocks.append(_heading("DPP Fit Assessment"))
         blocks.append(_paragraph(reasoning))
 
     # Key selling points

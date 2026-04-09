@@ -16,7 +16,6 @@ from src.discovery.contact_finder import ContactFinder
 from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier
 from src.layers.people_helpers import (
-    build_contact_body_blocks,
     extract_domain,
     split_name,
     verify_email_waterfall,
@@ -192,11 +191,6 @@ async def discover_contacts_for_company(
             if email_verified:
                 verified_count += 1
 
-            # Build page body
-            body_blocks = build_contact_body_blocks(
-                contact_data, company_name, email, email_verified
-            )
-
             # Create contact in Notion
             result = await notion_clients.contacts.create_contact(
                 name=name,
@@ -206,7 +200,6 @@ async def discover_contacts_for_company(
                 email_addr=email,
                 email_verified=email_verified,
                 linkedin_url=linkedin_url,
-                body_blocks=body_blocks,
             )
 
             if result is not None:
