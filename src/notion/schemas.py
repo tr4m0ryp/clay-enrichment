@@ -110,6 +110,7 @@ def contacts_schema(companies_db_id: str, campaigns_db_id: str) -> dict:
                 ]
             }
         },
+        "Context": {"rich_text": {}},
         "Campaign": {
             "relation": {
                 "database_id": campaigns_db_id,
