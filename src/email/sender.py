@@ -109,6 +109,27 @@ async def _get_recipient_email(
     return extract_email(page, "Email")
 
 
+async def _update_junction_status(
+    email_page: dict, status: str, notion_clients: Any
+) -> None:
+    """Update the junction table outreach status for an email's contact+campaign."""
+    cc_db = getattr(notion_clients, "contact_campaigns", None)
+    if cc_db is None:
+        return
+    contact_ids = extract_relation_ids(email_page, "Contact")
+    campaign_ids = extract_relation_ids(email_page, "Campaign")
+    if not contact_ids or not campaign_ids:
+        return
+    try:
+        entry = await cc_db.find_by_contact_campaign(
+            contact_ids[0], campaign_ids[0]
+        )
+        if entry:
+            await cc_db.update_outreach_status(entry["id"], status)
+    except Exception as exc:
+        logger.warning("Junction status update to '%s' failed: %s", status, exc)
+
+
 async def _send_one(
     email_page: dict,
     sender_pool: SenderPool,
@@ -122,7 +143,8 @@ async def _send_one(
         email_page: The Notion email page object.
         sender_pool: The SenderPool for sender selection.
         config: Application configuration.
-        notion_clients: Object with .emails and .contacts attributes.
+        notion_clients: Object with .emails, .contacts, and optionally
+            .contact_campaigns attributes.
 
     Returns:
         True on success, False on failure, None if skipped (no sender
@@ -167,6 +189,7 @@ async def _send_one(
                 "Sent At": date_prop(),
             },
         )
+        await _update_junction_status(email_page, "Sent", notion_clients)
         logger.info("Sent '%s' to %s via %s", subject, recipient, sender.email)
         return True
 
