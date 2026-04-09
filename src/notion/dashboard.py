@@ -266,7 +266,7 @@ async def setup_dashboard(client: NotionClient, config=None) -> dict:
     leads = _build_leads_section(config)
     stats = _build_stats_section()
 
-    all_blocks = campaigns + leads + stats
+    all_blocks = campaigns + leads + stats + _build_databases_section(config)
 
     # Notion API limits appends to 100 blocks at a time
     for i in range(0, len(all_blocks), 100):
