@@ -213,7 +213,7 @@ class ContactCampaignsDB:
         return await self._client.update_page(page_id, properties)
 
     async def get_high_priority(
-        self, campaign_id: str, min_score: float = 8.0
+        self, campaign_id: str, min_score: float = 7.0
     ) -> list[dict]:
         """Return entries for campaign_id with Relevance Score >= min_score."""
         filter_obj = {

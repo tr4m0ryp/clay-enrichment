@@ -246,7 +246,7 @@ async def email_gen_worker(
 
                 # Query junction table for high-priority entries
                 entries = await contact_campaigns_db.get_high_priority(
-                    campaign_id, min_score=8.0
+                    campaign_id, min_score=7.0
                 )
 
                 # Filter to entries without an email subject yet

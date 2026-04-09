@@ -15,7 +15,7 @@ from src.notion.prop_helpers import (
 logger = logging.getLogger(__name__)
 
 _TITLE_SUFFIX = " -- High Priority Leads"
-_MIN_SCORE = 8.0
+_MIN_SCORE = 7.0
 
 
 def _text(content: str, bold: bool = False) -> dict:
@@ -177,7 +177,7 @@ class LeadsPagesManager:
             if i < len(entries) - 1:
                 blocks.append(_divider())
         if not entries:
-            blocks.append(_paragraph("No contacts with score >= 8 yet."))
+            blocks.append(_paragraph("No contacts with score >= 7 yet."))
 
         await self._clear_page_body(page_id)
         for i in range(0, len(blocks), 100):
