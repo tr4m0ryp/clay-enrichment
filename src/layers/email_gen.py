@@ -1,10 +1,7 @@
 """
 Layer 4: Email generation worker.
 
-Sources high-priority contacts (score >=8) from the Contact-Campaign
-junction table, generates personalized outreach emails using person
-research + company enrichment + campaign-specific context via Gemini,
-and creates email records in Notion with "Pending Review" status.
+Generates personalized cold emails for high-priority contacts via Gemini.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from src.layers.email_context import (
     text_to_body_blocks,
     build_contact_context,
     build_company_context,
-    build_enhanced_prompt_context,
     group_junction_entries_by_company,
     entry_has_email_subject,
 )
@@ -120,61 +116,66 @@ async def generate_emails_for_company(
     if not entry_meta:
         return
 
-    # Build the combined context block for the prompt
-    contacts_block = build_enhanced_prompt_context(
-        company_context, contact_contexts, personalized_contexts,
-        campaign_target,
-    )
-
-    # Interpolate the prompt with campaign target and contacts.
     from src.prompts.email import GENERATE_EMAIL
 
-    prompt = GENERATE_EMAIL.replace(
-        "{campaign_target}",
-        campaign_target or "No specific campaign target provided.",
-    ).replace(
-        "{contacts}",
-        contacts_block,
-    )
+    # Generate one email per contact using individual context
+    for i, (junction_entry, contact_id, contact_name) in enumerate(entry_meta):
+        contact_ctx = contact_contexts[i] if i < len(contact_contexts) else ""
+        pc = personalized_contexts[i] if i < len(personalized_contexts) else ""
 
-    # Call Gemini
-    result = await gemini_client.generate(
-        prompt=prompt,
-        user_message="Generate personalized emails for each contact listed above.",
-        model=config.model_email_generation,
-        json_mode=True,
-        temperature=0.7,
-    )
-
-    # Parse response
-    try:
-        emails = json.loads(result["text"])
-    except json.JSONDecodeError:
-        logger.error(
-            "Failed to parse email generation response for company %s: %s",
-            company_name, result["text"][:500],
+        # Combine company enrichment with contact-level context
+        full_context = (
+            f"{company_context}\n\n{contact_ctx}"
+            if company_context else contact_ctx
         )
-        return
 
-    if not isinstance(emails, list):
-        emails = [emails]
+        # Interpolate per-contact prompt variables
+        prompt = GENERATE_EMAIL.replace(
+            "{campaign_target}",
+            campaign_target or "No specific campaign target provided.",
+        ).replace(
+            "{contact_name}", contact_name or "there",
+        ).replace(
+            "{company_name}", company_name or "the company",
+        ).replace(
+            "{contact_context}",
+            full_context or "No specific context available.",
+        ).replace(
+            "{personalized_context}",
+            pc or "No personalized context available.",
+        )
 
-    logger.info(
-        "Generated %d emails for %s | in=%d out=%d tokens",
-        len(emails), company_name,
-        result["input_tokens"], result["output_tokens"],
-    )
+        # Call Gemini for this contact
+        result = await gemini_client.generate(
+            prompt=prompt,
+            user_message=(
+                f"Generate a personalized cold email for {contact_name}"
+                f" at {company_name}."
+            ),
+            model=config.model_email_generation,
+            json_mode=True,
+            temperature=0.7,
+        )
 
-    # Create email records and update statuses
-    for i, email_data in enumerate(emails):
-        if i >= len(entry_meta):
-            logger.warning(
-                "More emails returned than contacts for %s, skipping extra",
-                company_name,
+        # Parse response
+        try:
+            email_data = json.loads(result["text"])
+        except json.JSONDecodeError:
+            logger.error(
+                "Failed to parse email response for %s at %s: %s",
+                contact_name, company_name, result["text"][:500],
             )
-            break
+            continue
 
-        junction_entry, contact_id, contact_name = entry_meta[i]
+        if isinstance(email_data, list):
+            email_data = email_data[0] if email_data else {}
+
+        logger.info(
+            "Generated email for %s at %s | in=%d out=%d tokens",
+            contact_name, company_name,
+            result["input_tokens"], result["output_tokens"],
+        )
+
         junction_id = junction_entry["id"]
         subject = email_data.get("subject", f"Outreach to {contact_name}")
         body = email_data.get("body", "")
