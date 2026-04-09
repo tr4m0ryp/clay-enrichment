@@ -182,17 +182,38 @@ def _build_databases_section(config) -> list[dict]:
         _paragraph(),
     ]
 
-    db_links = [
-        (config.notion_companies_db_id, "Companies"),
-        (config.notion_contacts_db_id, "Contacts"),
-        (config.notion_emails_db_id, "Emails"),
-        (config.notion_campaigns_db_id, "Campaigns"),
+    db_entries = [
+        (
+            config.notion_campaigns_db_id,
+            "Campaigns",
+            "Active outreach campaigns with target descriptions and status tracking.",
+        ),
+        (
+            config.notion_companies_db_id,
+            "Companies",
+            "Discovered and enriched companies with industry, DPP fit scores, and website data.",
+        ),
+        (
+            config.notion_contacts_db_id,
+            "Contacts",
+            "Decision-makers found at target companies with verified emails and LinkedIn profiles.",
+        ),
+        (
+            config.notion_emails_db_id,
+            "Emails",
+            "Generated outreach emails pending review, approved, or sent.",
+        ),
     ]
     if config.notion_contact_campaigns_db_id:
-        db_links.append((config.notion_contact_campaigns_db_id, "Contact Campaigns"))
+        db_entries.append((
+            config.notion_contact_campaigns_db_id,
+            "Contact Campaigns",
+            "Junction table linking contacts to campaigns with relevance scores and outreach status.",
+        ))
 
-    for db_id, label in db_links:
+    for db_id, label, description in db_entries:
         blocks.append(_paragraph([_text(label, bold=True)]))
+        blocks.append(_paragraph([_text(description, italic=True)]))
         blocks.append(_link_to_page(db_id))
 
     return blocks
