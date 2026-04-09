@@ -23,6 +23,7 @@ from src.notion.prop_helpers import (
 from src.prompts.campaign_scoring import SCORE_CONTACT_FOR_CAMPAIGN
 
 logger = logging.getLogger(__name__)
+MIN_DPP_FIT_SCORE = 7
 _CYCLE_INTERVAL = 240
 _CONCURRENCY = 5  # max contact-campaign pairs scored in parallel
 _EMPTY_COMPANY: dict = {
@@ -239,6 +240,17 @@ async def campaign_scoring_worker(
                 cids = extract_relation_ids(contact, "Company")
                 cid = cids[0] if cids else ""
                 cfields = company_map.get(cid, _EMPTY_COMPANY)
+
+                # Gate: skip contacts whose company is below DPP fit threshold
+                company_score = cfields.get("company_fit_score", 0) or 0
+                if company_score < MIN_DPP_FIT_SCORE:
+                    logger.info(
+                        "Campaign scoring: skipping '%s' (company DPP=%s, min=%d)",
+                        extract_title(contact, "Name"),
+                        company_score, MIN_DPP_FIT_SCORE,
+                    )
+                    continue
+
                 for campaign in campaigns:
                     tasks.append(_bounded(contact, campaign, cfields, cid))
             await asyncio.gather(*tasks)
