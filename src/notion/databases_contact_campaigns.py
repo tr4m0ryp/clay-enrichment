@@ -100,6 +100,7 @@ class ContactCampaignsDB:
         relevance_score: float = 0,
         score_reasoning: str = "",
         personalized_context: str = "",
+        context: str = "",
         body_blocks: list[dict] | None = None,
     ) -> dict | None:
         """
@@ -136,6 +137,7 @@ class ContactCampaignsDB:
             "Relevance Score": number_prop(relevance_score),
             "Score Reasoning": rich_text_prop(score_reasoning),
             "Personalized Context": rich_text_prop(personalized_context),
+            "Context": rich_text_prop(context),
             "Outreach Status": select_prop("New"),
             "Last Updated": date_prop(),
         }

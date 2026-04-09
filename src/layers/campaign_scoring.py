@@ -141,13 +141,14 @@ async def _process_pair(
     campaign_name = extract_title(campaign, "Name")
     campaign_target = extract_rich_text(campaign, "Target Description")
 
-    # Gather page body context for LLM
-    person_research = ""
-    try:
-        person_research = _blocks_to_text(
-            await notion_client.get_page_body(contact_id))
-    except Exception as exc:
-        logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
+    # Read Context property first; fall back to page body if empty
+    person_research = extract_rich_text(contact, "Context")
+    if not person_research:
+        try:
+            person_research = _blocks_to_text(
+                await notion_client.get_page_body(contact_id))
+        except Exception as exc:
+            logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
 
     company_summary = ""
     if company_id:
@@ -169,6 +170,7 @@ async def _process_pair(
             existing["id"], sr["relevance_score"],
             sr["score_reasoning"], sr["personalized_context"])
     else:
+        contact_context = extract_rich_text(contact, "Context")
         await contact_campaigns_db.create_entry(
             contact_id=contact_id, campaign_id=campaign_id,
             company_id=company_id, contact_name=cf["contact_name"],
@@ -182,6 +184,7 @@ async def _process_pair(
             relevance_score=sr["relevance_score"],
             score_reasoning=sr["score_reasoning"],
             personalized_context=sr["personalized_context"],
+            context=contact_context,
         )
     logger.info("Scored '%s' x '%s': %d",
                 cf["contact_name"], campaign_name, sr["relevance_score"])
