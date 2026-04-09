@@ -1,7 +1,7 @@
 """Layer 3: People discovery worker.
 
 Continuously picks up companies with status "Enriched", discovers
-contacts via Google search, generates and verifies email addresses,
+contacts via SearXNG search, generates and verifies email addresses,
 and creates contact records in Notion.
 """
 
@@ -11,11 +11,16 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
-from urllib.parse import urlparse
 
 from src.discovery.contact_finder import ContactFinder
 from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier
+from src.layers.people_helpers import (
+    build_contact_body_blocks,
+    extract_domain,
+    split_name,
+    verify_email_waterfall,
+)
 from src.models.gemini import GeminiClient
 from src.notion.databases_companies import CompaniesDB
 from src.notion.databases_contacts import ContactsDB
@@ -40,94 +45,16 @@ class NotionClients:
     contacts: ContactsDB
 
 
-def _extract_domain(website_url: str) -> str:
-    """Extract the bare domain from a company website URL.
-
-    Handles URLs with or without scheme, strips 'www.' prefix.
-
-    Args:
-        website_url: Raw URL string (e.g. "https://www.example.com/about").
-
-    Returns:
-        Bare domain string (e.g. "example.com"), or empty string if
-        the URL cannot be parsed.
-    """
-    if not website_url:
-        return ""
-
-    url = website_url.strip()
-    if not url.startswith(("http://", "https://")):
-        url = f"https://{url}"
-
-    try:
-        parsed = urlparse(url)
-        host = parsed.hostname or ""
-        if host.startswith("www."):
-            host = host[4:]
-        return host
-    except Exception:
-        return ""
-
-
-def _build_contact_body_blocks(
-    contact_data: dict,
-    company_name: str,
-    email: str,
-    verified: bool,
-) -> list[dict]:
-    """Build Notion page body blocks summarising the contact context.
-
-    Args:
-        contact_data: Parsed contact dict from Gemini.
-        company_name: The company this contact belongs to.
-        email: The selected email address.
-        verified: Whether the email was verified via SMTP.
-
-    Returns:
-        List of Notion block objects for the contact page body.
-    """
-    verification_label = "Verified" if verified else "Unverified (best guess)"
-    lines = [
-        f"Contact discovered at {company_name}",
-        f"Title: {contact_data.get('title', 'Unknown')}",
-        f"Relevance Score: {contact_data.get('relevance_score', 'N/A')}",
-        f"Email: {email} ({verification_label})",
-    ]
-    linkedin = contact_data.get("linkedin_url", "")
-    if linkedin:
-        lines.append(f"LinkedIn: {linkedin}")
-
-    blocks = []
-    for line in lines:
-        blocks.append(
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"type": "text", "text": {"content": line}}]
-                },
-            }
-        )
-    return blocks
-
-
 async def _parse_contacts_with_gemini(
     gemini_client: GeminiClient,
     company_name: str,
     domain: str,
     raw_contacts: list,
 ) -> list[dict]:
-    """Send raw search results through Gemini to extract structured contacts.
+    """Parse raw search results via Gemini into structured contact dicts.
 
-    Args:
-        gemini_client: The Gemini API client.
-        company_name: Name of the target company.
-        domain: Company domain.
-        raw_contacts: List of RawContact objects from ContactFinder.
-
-    Returns:
-        List of parsed contact dicts with name, title, linkedin_url,
-        relevance_score fields. Returns empty list on failure.
+    Returns list of dicts with name, title, linkedin_url fields, or
+    empty list on failure.
     """
     if not raw_contacts:
         return []
@@ -167,70 +94,12 @@ async def _parse_contacts_with_gemini(
         return []
 
 
-def _split_name(full_name: str) -> tuple[str, str]:
-    """Split a full name into first and last name.
-
-    Args:
-        full_name: Full name string.
-
-    Returns:
-        Tuple of (first_name, last_name). Last name may be empty for
-        single-word names.
-    """
-    parts = full_name.strip().split()
-    if not parts:
-        return ("", "")
-    if len(parts) == 1:
-        return (parts[0], "")
-    return (parts[0], " ".join(parts[1:]))
-
-
-async def _verify_email_waterfall(
-    smtp_verifier: SMTPVerifier,
-    permutations: list[str],
-) -> tuple[str, bool]:
-    """Try email permutations in order, stop at first verified.
-
-    Args:
-        smtp_verifier: The SMTP verification client.
-        permutations: Ordered list of email address candidates.
-
-    Returns:
-        Tuple of (email, verified). If none verify, returns the first
-        permutation marked as unverified.
-    """
-    if not permutations:
-        return ("", False)
-
-    for email in permutations:
-        try:
-            result = await smtp_verifier.verify(email)
-            if result.valid:
-                logger.info("Email verified: %s (method=%s)", email, result.method)
-                return (email, True)
-        except Exception as exc:
-            logger.warning("SMTP verify error for %s: %s", email, exc)
-            continue
-
-    # No email verified -- return first permutation as best guess
-    return (permutations[0], False)
-
-
 async def _is_duplicate_contact(
     contacts_db: ContactsDB,
     name: str,
     company_id: str,
 ) -> bool:
-    """Check if a contact with this name already exists for this company.
-
-    Args:
-        contacts_db: The Contacts database client.
-        name: Contact full name.
-        company_id: The Notion page ID of the company.
-
-    Returns:
-        True if a matching contact already exists.
-    """
+    """Return True if a contact with this name already exists for the company."""
     existing = await contacts_db.get_contacts_for_company(company_id)
     name_lower = name.lower().strip()
     for contact in existing:
@@ -250,24 +119,13 @@ async def discover_contacts_for_company(
 ) -> int:
     """Discover and create contacts for a single company.
 
-    Runs the full pipeline: search, parse, dedup, email permutation,
-    SMTP verification, and Notion contact creation.
-
-    Args:
-        company: Notion page object for the company.
-        gemini_client: Gemini API client for parsing search results.
-        notion_clients: Aggregate Notion database clients.
-        contact_finder: Google-based contact discovery client.
-        email_permutator: Email permutation generator.
-        smtp_verifier: SMTP email verification client.
-
-    Returns:
-        Number of contacts created.
+    Full pipeline: search, parse, dedup, email permutation, SMTP
+    verification, and Notion contact creation. Returns count created.
     """
     company_id = company["id"]
     company_name = extract_title(company, "Name")
     website = extract_url(company, "Website")
-    domain = _extract_domain(website)
+    domain = extract_domain(website)
     campaign_ids = extract_relation_ids(company, "Campaign")
     campaign_id = campaign_ids[0] if campaign_ids else ""
 
@@ -283,10 +141,10 @@ async def discover_contacts_for_company(
 
     logger.info("Discovering contacts for '%s' (domain=%s)", company_name, domain)
 
-    # Step 1: Find contacts via Google search
+    # Step 1: Find contacts via SearXNG search
     raw_contacts = await contact_finder.find_contacts(company_name, domain or "")
 
-    # Step 2: Parse and score via Gemini
+    # Step 2: Parse and structure via Gemini
     parsed_contacts = await _parse_contacts_with_gemini(
         gemini_client, company_name, domain or "", raw_contacts
     )
@@ -322,12 +180,12 @@ async def discover_contacts_for_company(
 
             # Email permutation + verification waterfall
             if domain:
-                first_name, last_name = _split_name(name)
+                first_name, last_name = split_name(name)
                 permutations = email_permutator.generate(
                     first_name, last_name, domain
                 )[:3]  # Top 3 patterns only for speed
                 if permutations:
-                    email, email_verified = await _verify_email_waterfall(
+                    email, email_verified = await verify_email_waterfall(
                         smtp_verifier, permutations
                     )
 
@@ -335,7 +193,7 @@ async def discover_contacts_for_company(
                 verified_count += 1
 
             # Build page body
-            body_blocks = _build_contact_body_blocks(
+            body_blocks = build_contact_body_blocks(
                 contact_data, company_name, email, email_verified
             )
 
@@ -385,19 +243,7 @@ async def people_worker(
     email_permutator: EmailPermutator,
     smtp_verifier: SMTPVerifier,
 ) -> None:
-    """Continuous worker that discovers contacts for enriched companies.
-
-    Polls for companies with status "Enriched", runs the full contact
-    discovery pipeline for each, then sleeps before the next cycle.
-
-    Args:
-        config: Application configuration.
-        gemini_client: Gemini API client.
-        notion_clients: Aggregate Notion database clients.
-        contact_finder: Google-based contact finder.
-        email_permutator: Email permutation generator.
-        smtp_verifier: SMTP email verifier.
-    """
+    """Continuous worker: discover contacts for companies with status Enriched."""
     logger.info("People worker started")
     while True:
         try:
