@@ -71,33 +71,59 @@ def _extract_fields(entry: dict) -> dict:
     }
 
 
-def _build_contact_blocks(f: dict) -> list[dict]:
-    """Build Notion blocks for a single contact entry."""
+def _cell(content: str) -> list[dict]:
+    """Build a single table cell (list of rich_text elements)."""
+    return [_text(content[:2000])] if content else []
+
+
+_TABLE_HEADERS = [
+    "Contact", "Job Title", "Company", "Score", "Industry",
+    "Location", "Email", "Status", "Context",
+]
+
+
+def _contact_row(f: dict) -> list[list[dict]]:
+    """Build a table row from extracted contact fields."""
     name = f["name"].split(" - ")[0] if " - " in f["name"] else f["name"]
-    co = f["company_name"] or "Unknown Company"
-    blocks: list[dict] = [
-        _heading3(f"{name} -- {co} (Score: {f['relevance_score']}/10)"),
-        _paragraph(f"Role: {f['job_title'] or 'N/A'}"),
+    vtag = " [v]" if f["email_verified"] else ""
+    return [
+        _cell(name),
+        _cell(f["job_title"] or ""),
+        _cell(f["company_name"] or ""),
+        _cell(f"{int(f['relevance_score'])}/10"),
+        _cell(f["industry"] or ""),
+        _cell(f["location"] or ""),
+        _cell((f["email"] or "") + vtag),
+        _cell(f["outreach_status"] or "New"),
+        _cell(f["personalized_context"] or f["score_reasoning"] or ""),
     ]
-    vtag = " [verified]" if f["email_verified"] else " [unverified]"
-    blocks.append(_paragraph(f"Email: {f['email'] or 'N/A'}{vtag if f['email'] else ''}"))
-    if f["phone"]:
-        blocks.append(_paragraph(f"Phone: {f['phone']}"))
-    if f["linkedin_url"]:
-        blocks.append(_paragraph(f"LinkedIn: {f['linkedin_url']}"))
-    blocks.append(_paragraph(
-        f"Company: {co} | {f['industry'] or 'N/A'} | "
-        f"{f['location'] or 'N/A'} | Size: {f['company_size'] or 'N/A'} | "
-        f"Fit: {f['company_fit_score']}/10"
-    ))
-    if f["score_reasoning"]:
-        blocks.append(_paragraph(f"Score Reasoning: {f['score_reasoning']}"))
-    if f["personalized_context"]:
-        blocks.append(_paragraph(f"Personalized Context: {f['personalized_context']}"))
-    if f["email_subject"]:
-        blocks.append(_paragraph(f"Email Subject: {f['email_subject']}"))
-    blocks.append(_paragraph(f"Outreach Status: {f['outreach_status'] or 'New'}"))
-    return blocks
+
+
+def _build_contacts_table(entries_fields: list[dict]) -> dict:
+    """Build a Notion table block with header + contact rows."""
+    col_count = len(_TABLE_HEADERS)
+    header_row = {
+        "object": "block",
+        "type": "table_row",
+        "table_row": {"cells": [_cell(h) for h in _TABLE_HEADERS]},
+    }
+    rows = [header_row]
+    for f in entries_fields:
+        rows.append({
+            "object": "block",
+            "type": "table_row",
+            "table_row": {"cells": _contact_row(f)},
+        })
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": col_count,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": rows,
+        },
+    }
 
 
 class LeadsPagesManager:
@@ -167,16 +193,16 @@ class LeadsPagesManager:
         entries = await self._cc_db.get_high_priority(campaign_id, min_score=_MIN_SCORE)
         entries.sort(key=lambda e: extract_number(e, "Relevance Score") or 0, reverse=True)
 
+        fields = [_extract_fields(e) for e in entries]
+
         blocks: list[dict] = [_heading2(f"Campaign: {campaign_name}")]
         if target_desc:
             blocks.append(_paragraph(target_desc))
         blocks.append(_divider())
         blocks.append(_heading2(f"High Priority Contacts ({len(entries)})"))
-        for i, entry in enumerate(entries):
-            blocks.extend(_build_contact_blocks(_extract_fields(entry)))
-            if i < len(entries) - 1:
-                blocks.append(_divider())
-        if not entries:
+        if fields:
+            blocks.append(_build_contacts_table(fields))
+        else:
             blocks.append(_paragraph("No contacts with score >= 7 yet."))
 
         await self._clear_page_body(page_id)
