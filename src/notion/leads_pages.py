@@ -99,6 +99,7 @@ def _build_contact_blocks(f: dict) -> list[dict]:
     blocks.append(_paragraph(f"Outreach Status: {f['outreach_status'] or 'New'}"))
     return blocks
 
+
 class LeadsPagesManager:
     """Manages per-campaign leads subpages under the High Priority Leads page."""
 
