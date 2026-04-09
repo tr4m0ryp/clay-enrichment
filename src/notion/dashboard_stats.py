@@ -14,13 +14,12 @@ from datetime import datetime, timezone
 from src.notion.client import NotionClient
 from src.notion.databases_campaigns import CampaignsDB
 from src.notion.databases_companies import CompaniesDB
+from src.notion.databases_contact_campaigns import ContactCampaignsDB
 from src.notion.databases_contacts import ContactsDB
 from src.notion.databases_emails import EmailsDB
 from src.notion.prop_helpers import extract_title, extract_select
 
 logger = logging.getLogger(__name__)
-
-_score_warning_logged = False
 
 
 @dataclass
@@ -48,44 +47,24 @@ async def _count_by_filter(
     return len(results)
 
 
-async def _count_usable_contacts(
+async def _count_high_priority_leads(
     client: NotionClient,
-    contacts_db_id: str,
+    contact_campaigns_db_id: str,
     campaign_id: str,
+    min_score: float = 7.0,
 ) -> int:
-    """
-    Count contacts with Score > 9 for a campaign.
-
-    If the Score property does not exist, returns 0 and logs a warning
-    once per process lifetime.
-    """
-    global _score_warning_logged
-
+    """Count high-priority leads (junction entries with scores >= min_score)."""
     filter_obj = {
         "and": [
             {"property": "Campaign", "relation": {"contains": campaign_id}},
-            {"property": "Score", "number": {"greater_than": 9}},
+            {"property": "Relevance Score",
+             "number": {"greater_than_or_equal_to": min_score}},
+            {"property": "Company Fit Score",
+             "number": {"greater_than_or_equal_to": min_score}},
         ]
     }
-    try:
-        results = await client.query_database(contacts_db_id, filter_obj=filter_obj)
-        return len(results)
-    except Exception as exc:
-        error_str = str(exc)
-        is_property_error = (
-            "Score" in error_str
-            or "property" in error_str.lower()
-            or "400" in error_str
-        )
-        if is_property_error:
-            if not _score_warning_logged:
-                logger.warning(
-                    "Score filter query failed (property may not exist); "
-                    "usable_contacts_count will be 0: %s", exc
-                )
-                _score_warning_logged = True
-            return 0
-        raise
+    results = await client.query_database(contact_campaigns_db_id, filter_obj=filter_obj)
+    return len(results)
 
 
 async def _compute_single_campaign(
@@ -94,6 +73,7 @@ async def _compute_single_campaign(
     companies_db_id: str,
     contacts_db_id: str,
     emails_db_id: str,
+    contact_campaigns_db_id: str,
 ) -> CampaignStats:
     """Compute stats for a single campaign by querying related databases."""
     campaign_id = campaign_page["id"]
@@ -110,7 +90,7 @@ async def _compute_single_campaign(
         await asyncio.gather(
             _count_by_filter(client, companies_db_id, campaign_filter),
             _count_by_filter(client, contacts_db_id, campaign_filter),
-            _count_usable_contacts(client, contacts_db_id, campaign_id),
+            _count_high_priority_leads(client, contact_campaigns_db_id, campaign_id),
             _count_by_filter(
                 client,
                 emails_db_id,
@@ -166,31 +146,34 @@ async def compute_stats(
     companies_db: CompaniesDB,
     contacts_db: ContactsDB,
     emails_db: EmailsDB,
+    contact_campaigns_db: ContactCampaignsDB | None = None,
 ) -> list[CampaignStats]:
     """
     Query all databases and compute per-campaign metrics.
 
     Fetches every campaign, then for each one counts related companies,
-    contacts, usable contacts (Score > 9), pending emails, and sent emails.
+    contacts, high-priority leads, pending emails, and sent emails.
 
     Args:
         campaigns_db: CampaignsDB instance.
         companies_db: CompaniesDB instance.
         contacts_db: ContactsDB instance.
         emails_db: EmailsDB instance.
+        contact_campaigns_db: ContactCampaignsDB instance for lead counts.
 
     Returns:
         List of CampaignStats, one per campaign.
     """
-    campaigns = await campaigns_db.get_all()
+    all_campaigns = await campaigns_db.get_all()
+    campaigns = [c for c in all_campaigns if extract_select(c, "Status")]
     if not campaigns:
         logger.info("No campaigns found, returning empty stats")
         return []
 
     logger.info("Computing stats for %d campaigns", len(campaigns))
 
-    # Use the underlying client for direct database queries
     client = campaigns_db._client
+    cc_db_id = contact_campaigns_db.db_id if contact_campaigns_db else ""
 
     tasks = [
         _compute_single_campaign(
@@ -199,6 +182,7 @@ async def compute_stats(
             companies_db.db_id,
             contacts_db.db_id,
             emails_db.db_id,
+            cc_db_id,
         )
         for campaign in campaigns
     ]

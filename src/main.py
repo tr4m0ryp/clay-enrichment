@@ -266,7 +266,8 @@ async def main() -> None:
         ("leads_refresh", _leads_refresh_loop,
          [notion_client, contact_campaigns_db, campaigns_db, leads_page_id]),
         ("dashboard_stats", dashboard_stats_worker,
-         [notion_client, campaigns_db, companies_db, contacts_db, emails_db]),
+         [notion_client, campaigns_db, companies_db, contacts_db, emails_db,
+          contact_campaigns_db]),
     ]
     logger.info("Launching %d workers", len(workers))
 

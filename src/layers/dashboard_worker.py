@@ -14,6 +14,7 @@ from pathlib import Path
 
 from src.notion.databases_campaigns import CampaignsDB
 from src.notion.databases_companies import CompaniesDB
+from src.notion.databases_contact_campaigns import ContactCampaignsDB
 from src.notion.databases_contacts import ContactsDB
 from src.notion.databases_emails import EmailsDB
 from src.notion.client import NotionClient
@@ -64,12 +65,9 @@ async def dashboard_stats_worker(
     companies_db: CompaniesDB,
     contacts_db: ContactsDB,
     emails_db: EmailsDB,
+    contact_campaigns_db: ContactCampaignsDB | None = None,
 ) -> None:
     """Continuous loop that refreshes dashboard stats every 5 minutes.
-
-    Reads the stats table block ID from the persisted blocks file,
-    computes fresh stats from all four databases, and updates the
-    table. Errors are caught and logged so the loop continues.
 
     Args:
         notion_client: NotionClient instance for API calls.
@@ -77,6 +75,7 @@ async def dashboard_stats_worker(
         companies_db: CompaniesDB instance.
         contacts_db: ContactsDB instance.
         emails_db: EmailsDB instance.
+        contact_campaigns_db: ContactCampaignsDB for high-priority lead counts.
     """
     while True:
         try:
@@ -89,7 +88,8 @@ async def dashboard_stats_worker(
                 continue
 
             stats = await compute_stats(
-                campaigns_db, companies_db, contacts_db, emails_db
+                campaigns_db, companies_db, contacts_db, emails_db,
+                contact_campaigns_db,
             )
 
             await update_stats_table(notion_client, stats, stats_table_id)

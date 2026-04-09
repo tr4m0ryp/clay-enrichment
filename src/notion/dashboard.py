@@ -143,7 +143,7 @@ def _build_stats_section() -> list[dict]:
     """Build the statistics section blocks."""
     headers = [
         "Campaign", "Status", "Companies", "Contacts",
-        "Usable Contacts", "Emails Pending", "Emails Sent", "Last Updated",
+        "High Priority Leads", "Emails Pending", "Emails Sent", "Last Updated",
     ]
     placeholder_row = ["--"] * 8
     return [
