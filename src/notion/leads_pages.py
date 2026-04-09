@@ -196,24 +196,13 @@ class LeadsPagesManager:
             page_id = self._campaign_pages[cid]
             entries = await self._cc_db.get_high_priority(cid, min_score=_MIN_SCORE)
             count = len(entries)
-            # Mention link to child page
-            mention_block = {
+            # Clickable link to campaign subpage
+            blocks.append({
                 "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [
-                        {
-                            "type": "mention",
-                            "mention": {
-                                "type": "page",
-                                "page": {"id": page_id},
-                            },
-                        },
-                        _text(f" -- {count} high-priority contacts"),
-                    ]
-                },
-            }
-            blocks.append(mention_block)
+                "type": "link_to_page",
+                "link_to_page": {"type": "page_id", "page_id": page_id},
+            })
+            blocks.append(_paragraph(f"{count} high-priority contacts"))
 
         # Clear parent body (skip child_page blocks) and rewrite index
         existing = await self._client.get_page_body(self._leads_page_id)
