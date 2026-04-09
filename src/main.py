@@ -21,6 +21,7 @@ from src.models.gemini import GeminiClient
 from src.notion.client import NotionClient
 from src.notion.setup import setup_databases
 from src.notion.databases import CampaignsDB, CompaniesDB, ContactsDB, EmailsDB
+from src.notion.databases_contact_campaigns import ContactCampaignsDB
 from src.search.brave_search import BraveSearchClient
 from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
@@ -206,6 +207,9 @@ async def main() -> None:
     companies_db = CompaniesDB(notion_client)
     contacts_db = ContactsDB(notion_client)
     emails_db = EmailsDB(notion_client)
+    contact_campaigns_db = ContactCampaignsDB(
+        notion_client, config.notion_contact_campaigns_db_id,
+    )
 
     # Override DB IDs if setup just created them (config may not have them)
     if db_ids.get("campaigns"):
@@ -216,6 +220,8 @@ async def main() -> None:
         contacts_db.db_id = db_ids["contacts"]
     if db_ids.get("emails"):
         emails_db.db_id = db_ids["emails"]
+    if db_ids.get("contact_campaigns"):
+        contact_campaigns_db.db_id = db_ids["contact_campaigns"]
 
     # Contact-Campaigns junction DB
     cc_db_id = db_ids.get("contact_campaigns") or config.notion_contact_campaigns_db_id
