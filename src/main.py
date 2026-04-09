@@ -240,6 +240,7 @@ async def main() -> None:
     sender_notion = SimpleNamespace(
         emails=emails_db,
         contacts=contacts_db,
+        contact_campaigns=contact_campaigns_db,
     )
 
     # Install signal handlers
