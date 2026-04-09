@@ -60,14 +60,12 @@ def contact_campaigns_schema(
         "Company Name": {"rich_text": {}},
         "Email": {"email": {}},
         "Email Verified": {"checkbox": {}},
-        "Phone": {"phone_number": {}},
         "LinkedIn URL": {"url": {}},
         "Industry": {
             "select": {
                 "options": [{"name": opt} for opt in INDUSTRY_OPTIONS]
             }
         },
-        "Company Size": {"rich_text": {}},
         "Location": {"rich_text": {}},
         "Company Fit Score": {"number": {"format": "number"}},
         "Relevance Score": {"number": {"format": "number"}},

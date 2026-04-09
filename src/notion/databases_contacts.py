@@ -3,9 +3,9 @@ Typed CRUD operations for the Contacts Notion database.
 
 Schema:
     Name (title), Job Title (rich_text), Email (email),
-    Email Verified (checkbox), Phone (phone_number),
-    LinkedIn URL (url), Company (relation->Companies),
-    Status (select), Campaign (relation->Campaigns)
+    Email Verified (checkbox), LinkedIn URL (url),
+    Company (relation->Companies), Status (select),
+    Campaign (relation->Campaigns)
 """
 
 import logging
@@ -17,7 +17,6 @@ from src.notion.prop_helpers import (
     rich_text_prop,
     select_prop,
     email_prop,
-    phone_prop,
     url_prop,
     checkbox_prop,
     relation_prop,
@@ -86,7 +85,6 @@ class ContactsDB:
         job_title: str = "",
         email_addr: str = "",
         email_verified: bool = False,
-        phone: str = "",
         linkedin_url: str = "",
         body_blocks: list[dict] | None = None,
     ) -> dict | None:
@@ -103,7 +101,6 @@ class ContactsDB:
             job_title: Contact's job title.
             email_addr: Contact's email address.
             email_verified: Whether the email has been verified.
-            phone: Contact's phone number.
             linkedin_url: Contact's LinkedIn profile URL.
             body_blocks: Optional page body blocks with full details.
 
@@ -132,8 +129,6 @@ class ContactsDB:
             properties["Email"] = email_prop(email_addr)
         if email_verified:
             properties["Email Verified"] = checkbox_prop(True)
-        if phone:
-            properties["Phone"] = phone_prop(phone)
         if linkedin_url:
             properties["LinkedIn URL"] = url_prop(linkedin_url)
 

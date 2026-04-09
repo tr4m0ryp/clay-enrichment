@@ -19,7 +19,7 @@ from src.notion.prop_helpers import (
     extract_title, extract_rich_text, extract_select,
     extract_number, extract_url, extract_email, extract_checkbox,
     title_prop, rich_text_prop, select_prop, number_prop,
-    email_prop, checkbox_prop, phone_prop, url_prop,
+    email_prop, checkbox_prop, url_prop,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,12 +36,10 @@ _LEADS_DB_SCHEMA: dict = {
     "Company": {"rich_text": {}},
     "Email": {"email": {}},
     "Email Verified": {"checkbox": {}},
-    "Phone": {"phone_number": {}},
     "LinkedIn URL": {"url": {}},
     "Industry": {
         "select": {"options": [{"name": o} for o in INDUSTRY_OPTIONS]},
     },
-    "Company Size": {"rich_text": {}},
     "Location": {"rich_text": {}},
     "Company Fit Score": {"number": {"format": "number"}},
     "Relevance Score": {"number": {"format": "number"}},
@@ -56,11 +54,6 @@ _LEADS_DB_SCHEMA: dict = {
 # -- Field extraction and conversion -----------------------------------------
 
 
-def _extract_phone(page: dict) -> str:
-    prop = page.get("properties", {}).get("Phone", {})
-    return prop.get("phone_number") or ""
-
-
 def _extract_fields(entry: dict) -> dict:
     """Pull all display fields from a junction record."""
     return {
@@ -69,10 +62,8 @@ def _extract_fields(entry: dict) -> dict:
         "company_name": extract_rich_text(entry, "Company Name"),
         "email": extract_email(entry, "Email"),
         "email_verified": extract_checkbox(entry, "Email Verified"),
-        "phone": _extract_phone(entry),
         "linkedin_url": extract_url(entry, "LinkedIn URL"),
         "industry": extract_select(entry, "Industry"),
-        "company_size": extract_rich_text(entry, "Company Size"),
         "location": extract_rich_text(entry, "Location"),
         "company_fit_score": extract_number(entry, "Company Fit Score") or 0,
         "relevance_score": extract_number(entry, "Relevance Score") or 0,
@@ -95,14 +86,10 @@ def _fields_to_properties(f: dict) -> dict:
         props["Email"] = email_prop(f["email"])
     if f["email_verified"]:
         props["Email Verified"] = checkbox_prop(True)
-    if f["phone"]:
-        props["Phone"] = phone_prop(f["phone"])
     if f["linkedin_url"]:
         props["LinkedIn URL"] = url_prop(f["linkedin_url"])
     if f["industry"]:
         props["Industry"] = select_prop(f["industry"])
-    if f["company_size"]:
-        props["Company Size"] = rich_text_prop(f["company_size"])
     if f["location"]:
         props["Location"] = rich_text_prop(f["location"])
     if f["company_fit_score"]:
