@@ -185,7 +185,7 @@ async def _get_campaign_target(company_page: dict, campaigns_db) -> str:
         return ""
 
     try:
-        campaigns = await campaigns_db.get_active_campaigns()
+        campaigns = await campaigns_db.get_processable_campaigns()
         for campaign in campaigns:
             if campaign["id"] in campaign_ids:
                 return extract_rich_text(campaign, "Target Description")
