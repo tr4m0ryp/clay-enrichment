@@ -60,47 +60,6 @@ def split_name(full_name: str) -> tuple[str, str]:
     return (parts[0], " ".join(parts[1:]))
 
 
-def build_contact_body_blocks(
-    contact_data: dict,
-    company_name: str,
-    email: str,
-    verified: bool,
-) -> list[dict]:
-    """Build Notion page body blocks summarising the contact context.
-
-    Args:
-        contact_data: Parsed contact dict from Gemini.
-        company_name: The company this contact belongs to.
-        email: The selected email address.
-        verified: Whether the email was verified via SMTP.
-
-    Returns:
-        List of Notion block objects for the contact page body.
-    """
-    verification_label = "Verified" if verified else "Unverified (best guess)"
-    lines = [
-        f"Contact discovered at {company_name}",
-        f"Title: {contact_data.get('title', 'Unknown')}",
-        f"Email: {email} ({verification_label})",
-    ]
-    linkedin = contact_data.get("linkedin_url", "")
-    if linkedin:
-        lines.append(f"LinkedIn: {linkedin}")
-
-    blocks = []
-    for line in lines:
-        blocks.append(
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"type": "text", "text": {"content": line}}]
-                },
-            }
-        )
-    return blocks
-
-
 async def verify_email_waterfall(
     smtp_verifier: SMTPVerifier,
     permutations: list[str],

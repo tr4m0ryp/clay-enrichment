@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from src.notion.client import NotionClient
@@ -99,31 +100,40 @@ def _contact_row(f: dict) -> list[list[dict]]:
     ]
 
 
-def _build_contacts_table(entries_fields: list[dict]) -> dict:
-    """Build a Notion table block with header + contact rows."""
+_MAX_TABLE_ROWS = 99  # Notion limit: 100 children per table (1 header + 99 data)
+
+
+def _build_contacts_tables(entries_fields: list[dict]) -> list[dict]:
+    """Build Notion table blocks, splitting into chunks of 99 rows each."""
     col_count = len(_TABLE_HEADERS)
-    header_row = {
-        "object": "block",
-        "type": "table_row",
-        "table_row": {"cells": [_cell(h) for h in _TABLE_HEADERS]},
-    }
-    rows = [header_row]
-    for f in entries_fields:
-        rows.append({
+    tables: list[dict] = []
+
+    for start in range(0, len(entries_fields), _MAX_TABLE_ROWS):
+        chunk = entries_fields[start : start + _MAX_TABLE_ROWS]
+        header_row = {
             "object": "block",
             "type": "table_row",
-            "table_row": {"cells": _contact_row(f)},
+            "table_row": {"cells": [_cell(h) for h in _TABLE_HEADERS]},
+        }
+        rows = [header_row]
+        for f in chunk:
+            rows.append({
+                "object": "block",
+                "type": "table_row",
+                "table_row": {"cells": _contact_row(f)},
+            })
+        tables.append({
+            "object": "block",
+            "type": "table",
+            "table": {
+                "table_width": col_count,
+                "has_column_header": True,
+                "has_row_header": False,
+                "children": rows,
+            },
         })
-    return {
-        "object": "block",
-        "type": "table",
-        "table": {
-            "table_width": col_count,
-            "has_column_header": True,
-            "has_row_header": False,
-            "children": rows,
-        },
-    }
+
+    return tables
 
 
 class LeadsPagesManager:
@@ -178,12 +188,17 @@ class LeadsPagesManager:
         return page_id
 
     async def _clear_page_body(self, page_id: str) -> None:
-        """Delete all blocks from a page."""
+        """Delete all blocks from a page (parallel, batched)."""
         blocks = await self._client.get_page_body(page_id)
-        for block in blocks:
-            await self._client._call(
-                self._client._sdk.blocks.delete, block_id=block["id"]
-            )
+        sem = asyncio.Semaphore(10)
+
+        async def _del(block_id: str) -> None:
+            async with sem:
+                await self._client._call(
+                    self._client._sdk.blocks.delete, block_id=block_id
+                )
+
+        await asyncio.gather(*[_del(b["id"]) for b in blocks])
 
     async def update_campaign_page(
         self, campaign_id: str, campaign_name: str, target_desc: str = "",
@@ -201,7 +216,7 @@ class LeadsPagesManager:
         blocks.append(_divider())
         blocks.append(_heading2(f"High Priority Contacts ({len(entries)})"))
         if fields:
-            blocks.append(_build_contacts_table(fields))
+            blocks.extend(_build_contacts_tables(fields))
         else:
             blocks.append(_paragraph("No contacts with score >= 7 yet."))
 
