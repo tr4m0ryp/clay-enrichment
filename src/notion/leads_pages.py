@@ -127,10 +127,19 @@ def _heading2(text: str) -> dict:
             "heading_2": {"rich_text": [{"type": "text", "text": {"content": text}}]}}
 
 
+def _heading3(text: str) -> dict:
+    return {"object": "block", "type": "heading_3",
+            "heading_3": {"rich_text": [{"type": "text", "text": {"content": text}}]}}
+
+
 def _paragraph(content: str) -> dict:
     return {"object": "block", "type": "paragraph",
             "paragraph": {"rich_text": [{"type": "text",
              "text": {"content": content}}] if content else []}}
+
+
+def _divider() -> dict:
+    return {"object": "block", "type": "divider", "divider": {}}
 
 
 # -- Manager class ------------------------------------------------------------
@@ -247,20 +256,27 @@ class LeadsPagesManager:
                      campaign_name, archived, len(fields))
 
     async def update_parent_index(self, campaigns: list[dict]) -> None:
-        """Update the parent page with links to campaign subpages."""
+        """Update the parent page with direct links to campaign leads databases."""
         blocks: list[dict] = [_heading2("High Priority Leads")]
         for campaign in campaigns:
             cid = campaign["id"]
             name = extract_title(campaign, "Name")
+            target_desc = extract_rich_text(campaign, "Target Description")
             if cid not in self._campaign_pages:
                 continue
             page_id = self._campaign_pages[cid]
+            db_id = self._campaign_dbs.get(page_id)
+            if not db_id:
+                continue
             entries = await self._cc_db.get_high_priority(cid, min_score=_MIN_SCORE)
+            blocks.append(_heading3(f"{name} ({len(entries)} leads)"))
+            if target_desc:
+                blocks.append(_paragraph(target_desc))
             blocks.append({
                 "object": "block", "type": "link_to_page",
-                "link_to_page": {"type": "page_id", "page_id": page_id},
+                "link_to_page": {"type": "database_id", "database_id": db_id},
             })
-            blocks.append(_paragraph(f"{len(entries)} high-priority contacts"))
+            blocks.append(_divider())
         existing = await self._client.get_page_body(self._leads_page_id)
         for block in existing:
             if block.get("type") == "child_page":

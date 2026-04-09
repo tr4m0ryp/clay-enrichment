@@ -158,23 +158,43 @@ def _build_stats_section() -> list[dict]:
     ]
 
 
+def _build_leads_section(config) -> list[dict]:
+    """Build the High Priority Leads section blocks."""
+    if not config.notion_leads_page_id:
+        return []
+    return [
+        _heading1("// High Priority Leads"),
+        _paragraph([
+            _text("Filtered database of contacts scoring 7/10 or above, grouped by campaign."),
+        ]),
+        _paragraph(),
+        _link_to_page_by_id(config.notion_leads_page_id),
+        _paragraph(),
+        _divider(),
+    ]
+
+
 def _build_databases_section(config) -> list[dict]:
     """Build the databases section blocks."""
     blocks = [
         _heading1("// Databases"),
-        _paragraph([_text("Direct access to raw data and operational pages.")]),
+        _paragraph([_text("Raw data tables powering the pipeline.")]),
         _paragraph(),
     ]
-    if config.notion_leads_page_id:
-        blocks.append(_link_to_page_by_id(config.notion_leads_page_id))
-    blocks.extend([
-        _link_to_page(config.notion_companies_db_id),
-        _link_to_page(config.notion_contacts_db_id),
-        _link_to_page(config.notion_emails_db_id),
-        _link_to_page(config.notion_campaigns_db_id),
-    ])
+
+    db_links = [
+        (config.notion_companies_db_id, "Companies"),
+        (config.notion_contacts_db_id, "Contacts"),
+        (config.notion_emails_db_id, "Emails"),
+        (config.notion_campaigns_db_id, "Campaigns"),
+    ]
     if config.notion_contact_campaigns_db_id:
-        blocks.append(_link_to_page(config.notion_contact_campaigns_db_id))
+        db_links.append((config.notion_contact_campaigns_db_id, "Contact Campaigns"))
+
+    for db_id, label in db_links:
+        blocks.append(_paragraph([_text(label, bold=True)]))
+        blocks.append(_link_to_page(db_id))
+
     return blocks
 
 
@@ -183,17 +203,21 @@ def _build_databases_section(config) -> list[dict]:
 async def _clear_page(client: NotionClient, page_id: str) -> None:
     """Delete all existing child blocks from the hub page.
 
-    Skips child_database blocks to avoid destroying actual databases.
+    Skips child_database and child_page blocks to preserve actual data.
     """
     existing = await client.get_page_body(page_id)
+    skipped = 0
     for block in existing:
-        if block.get("type") == "child_database":
-            logger.debug("Keeping child_database block %s", block["id"])
+        btype = block.get("type")
+        if btype in ("child_database", "child_page"):
+            logger.debug("Keeping %s block %s", btype, block["id"])
+            skipped += 1
             continue
         await client._call(client._sdk.blocks.delete, block_id=block["id"])
-        logger.debug("Deleted block %s (type=%s)", block["id"], block.get("type"))
+        logger.debug("Deleted block %s (type=%s)", block["id"], btype)
 
-    logger.info("Cleared %d blocks from hub page %s", len(existing), page_id)
+    logger.info("Cleared %d blocks from hub page %s (kept %d)",
+                len(existing) - skipped, page_id, skipped)
 
 
 # -- Block ID persistence ----------------------------------------------------
@@ -239,10 +263,10 @@ async def setup_dashboard(client: NotionClient, config=None) -> dict:
 
     # Build all section blocks
     campaigns = _build_campaigns_section(config.notion_campaigns_db_id)
+    leads = _build_leads_section(config)
     stats = _build_stats_section()
-    databases = _build_databases_section(config)
 
-    all_blocks = campaigns + stats + databases
+    all_blocks = campaigns + leads + stats
 
     # Notion API limits appends to 100 blocks at a time
     for i in range(0, len(all_blocks), 100):
