@@ -82,6 +82,15 @@ def _link_to_page(database_id: str) -> dict:
     }
 
 
+def _link_to_page_by_id(page_id: str) -> dict:
+    """Build a link_to_page block referencing a page (not a database)."""
+    return {
+        "object": "block",
+        "type": "link_to_page",
+        "link_to_page": {"type": "page_id", "page_id": page_id},
+    }
+
+
 def _table(column_count: int, has_header: bool, rows: list[list[str]]) -> dict:
     """Build a table block with table_row children."""
     table_rows = []
@@ -151,15 +160,22 @@ def _build_stats_section() -> list[dict]:
 
 def _build_databases_section(config) -> list[dict]:
     """Build the databases section blocks."""
-    return [
+    blocks = [
         _heading1("// Databases"),
-        _paragraph([_text("Direct access to raw data.")]),
+        _paragraph([_text("Direct access to raw data and operational pages.")]),
         _paragraph(),
+    ]
+    if config.notion_leads_page_id:
+        blocks.append(_link_to_page_by_id(config.notion_leads_page_id))
+    blocks.extend([
         _link_to_page(config.notion_companies_db_id),
         _link_to_page(config.notion_contacts_db_id),
         _link_to_page(config.notion_emails_db_id),
         _link_to_page(config.notion_campaigns_db_id),
-    ]
+    ])
+    if config.notion_contact_campaigns_db_id:
+        blocks.append(_link_to_page(config.notion_contact_campaigns_db_id))
+    return blocks
 
 
 # -- Page clearing ------------------------------------------------------------
