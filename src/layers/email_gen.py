@@ -233,10 +233,10 @@ async def email_gen_worker(
 
     while True:
         try:
-            # Get all active campaigns
-            active_campaigns = await campaigns_db.get_active_campaigns()
+            # Get all processable campaigns (Active + Paused + Completed)
+            active_campaigns = await campaigns_db.get_processable_campaigns()
             if not active_campaigns:
-                logger.debug("No active campaigns, sleeping")
+                logger.debug("No processable campaigns, sleeping")
                 await asyncio.sleep(_CYCLE_INTERVAL)
                 continue
 
