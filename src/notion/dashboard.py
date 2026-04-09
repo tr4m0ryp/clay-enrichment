@@ -115,6 +115,15 @@ def _table(column_count: int, has_header: bool, rows: list[list[str]]) -> dict:
 
 # -- Section builders ---------------------------------------------------------
 
+def _heading4(text: str) -> dict:
+    """Build a heading_4 block (used for de-emphasized labels)."""
+    return {
+        "object": "block",
+        "type": "heading_3",
+        "heading_3": {"rich_text": [_text(text, italic=True)]},
+    }
+
+
 def _build_campaigns_section(campaigns_db_id: str) -> list[dict]:
     """Build the campaigns section blocks."""
     instruction_texts = [
@@ -130,10 +139,25 @@ def _build_campaigns_section(campaigns_db_id: str) -> list[dict]:
               "'Turn into inline' for an embedded editable view.", bold=True),
     ]
     return [
-        _heading1("// Campaigns"),
+        _heading1("Campaigns - Setup"),
         _callout(instruction_texts),
         _paragraph(),
         _link_to_page(campaigns_db_id),
+        _paragraph(),
+        _divider(),
+    ]
+
+
+def _build_leads_section(config) -> list[dict]:
+    """Build the Leads section blocks."""
+    if not config.notion_leads_page_id:
+        return []
+    return [
+        _heading1("Leads"),
+        _paragraph([
+            _text("Filtered database of contacts scoring 7/10 or above, grouped by campaign."),
+        ]),
+        _link_to_page_by_id(config.notion_leads_page_id),
         _paragraph(),
         _divider(),
     ]
@@ -147,76 +171,18 @@ def _build_stats_section() -> list[dict]:
     ]
     placeholder_row = ["--"] * 8
     return [
-        _heading1("// Pipeline Statistics"),
+        _heading1("Pipeline Statistics"),
         _paragraph([_text(
             "Updated every 5 minutes. Metrics are computed from live database queries."
         )]),
-        _paragraph(),
         _table(8, has_header=True, rows=[headers, placeholder_row]),
-        _paragraph(),
         _divider(),
     ]
 
 
-def _build_leads_section(config) -> list[dict]:
-    """Build the High Priority Leads section blocks."""
-    if not config.notion_leads_page_id:
-        return []
-    return [
-        _heading1("// High Priority Leads"),
-        _paragraph([
-            _text("Filtered database of contacts scoring 7/10 or above, grouped by campaign."),
-        ]),
-        _paragraph(),
-        _link_to_page_by_id(config.notion_leads_page_id),
-        _paragraph(),
-        _divider(),
-    ]
-
-
-def _build_databases_section(config) -> list[dict]:
-    """Build the databases section blocks."""
-    blocks = [
-        _heading1("// Databases"),
-        _paragraph([_text("Raw data tables powering the pipeline.")]),
-        _paragraph(),
-    ]
-
-    db_entries = [
-        (
-            config.notion_campaigns_db_id,
-            "Campaigns",
-            "Active outreach campaigns with target descriptions and status tracking.",
-        ),
-        (
-            config.notion_companies_db_id,
-            "Companies",
-            "Discovered and enriched companies with industry, DPP fit scores, and website data.",
-        ),
-        (
-            config.notion_contacts_db_id,
-            "Contacts",
-            "Decision-makers found at target companies with verified emails and LinkedIn profiles.",
-        ),
-        (
-            config.notion_emails_db_id,
-            "Emails",
-            "Generated outreach emails pending review, approved, or sent.",
-        ),
-    ]
-    if config.notion_contact_campaigns_db_id:
-        db_entries.append((
-            config.notion_contact_campaigns_db_id,
-            "Contact Campaigns",
-            "Junction table linking contacts to campaigns with relevance scores and outreach status.",
-        ))
-
-    for db_id, label, description in db_entries:
-        blocks.append(_paragraph([_text(label, bold=True)]))
-        blocks.append(_paragraph([_text(description, italic=True)]))
-        blocks.append(_link_to_page(db_id))
-
-    return blocks
+def _build_ignore_label() -> list[dict]:
+    """Label for the unavoidable child database blocks at the bottom."""
+    return [_heading4("Ignore this section:")]
 
 
 # -- Page clearing ------------------------------------------------------------
@@ -283,11 +249,12 @@ async def setup_dashboard(client: NotionClient, config=None) -> dict:
     await _clear_page(client, hub_page_id)
 
     # Build all section blocks
-    campaigns = _build_campaigns_section(config.notion_campaigns_db_id)
-    leads = _build_leads_section(config)
-    stats = _build_stats_section()
-
-    all_blocks = campaigns + leads + stats + _build_databases_section(config)
+    all_blocks = (
+        _build_campaigns_section(config.notion_campaigns_db_id)
+        + _build_leads_section(config)
+        + _build_stats_section()
+        + _build_ignore_label()
+    )
 
     # Notion API limits appends to 100 blocks at a time
     for i in range(0, len(all_blocks), 100):
