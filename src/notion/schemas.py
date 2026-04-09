@@ -95,7 +95,6 @@ def contacts_schema(companies_db_id: str, campaigns_db_id: str) -> dict:
         "Job Title": {"rich_text": {}},
         "Email": {"email": {}},
         "Email Verified": {"checkbox": {}},
-        "Phone": {"phone_number": {}},
         "LinkedIn URL": {"url": {}},
         "Company": {
             "relation": {

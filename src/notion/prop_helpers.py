@@ -86,19 +86,6 @@ def email_prop(value: str) -> dict:
     return {"email": value}
 
 
-def phone_prop(value: str) -> dict:
-    """
-    Build a Notion phone_number property value.
-
-    Args:
-        value: The phone number string.
-
-    Returns:
-        Notion property dict for a phone_number field.
-    """
-    return {"phone_number": value}
-
-
 def checkbox_prop(value: bool) -> dict:
     """
     Build a Notion checkbox property value.

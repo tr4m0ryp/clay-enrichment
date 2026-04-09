@@ -4,11 +4,11 @@ Typed CRUD operations for the Contact-Campaign junction Notion database.
 Schema:
     Name (title), Contact (relation->Contacts), Campaign (relation->Campaigns),
     Company (relation->Companies), Job Title (rich_text), Company Name (rich_text),
-    Email (email), Email Verified (checkbox), Phone (phone_number),
-    LinkedIn URL (url), Industry (select), Company Size (rich_text),
-    Location (rich_text), Company Fit Score (number), Relevance Score (number),
-    Score Reasoning (rich_text), Personalized Context (rich_text),
-    Email Subject (rich_text), Outreach Status (select), Last Updated (date)
+    Email (email), Email Verified (checkbox), LinkedIn URL (url),
+    Industry (select), Location (rich_text), Company Fit Score (number),
+    Relevance Score (number), Score Reasoning (rich_text),
+    Personalized Context (rich_text), Email Subject (rich_text),
+    Outreach Status (select), Last Updated (date)
 
 The schema function for setup.py lives in databases_contact_campaigns_schema.py.
 """
@@ -25,7 +25,6 @@ from src.notion.prop_helpers import (
     number_prop,
     url_prop,
     email_prop,
-    phone_prop,
     checkbox_prop,
     date_prop,
     relation_prop,
@@ -94,10 +93,8 @@ class ContactCampaignsDB:
         company_name: str = "",
         email_addr: str = "",
         email_verified: bool = False,
-        phone: str = "",
         linkedin_url: str = "",
         industry: str = "Other",
-        company_size: str = "",
         location: str = "",
         company_fit_score: float = 0,
         relevance_score: float = 0,
@@ -134,7 +131,6 @@ class ContactCampaignsDB:
             "Company Name": rich_text_prop(company_name),
             "Email Verified": checkbox_prop(email_verified),
             "Industry": select_prop(industry),
-            "Company Size": rich_text_prop(company_size),
             "Location": rich_text_prop(location),
             "Company Fit Score": number_prop(company_fit_score),
             "Relevance Score": number_prop(relevance_score),
@@ -146,8 +142,6 @@ class ContactCampaignsDB:
 
         if email_addr:
             properties["Email"] = email_prop(email_addr)
-        if phone:
-            properties["Phone"] = phone_prop(phone)
         if linkedin_url:
             properties["LinkedIn URL"] = url_prop(linkedin_url)
 

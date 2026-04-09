@@ -34,15 +34,12 @@ Weight these factors:
 the EU market. EU regulation drives DPP adoption. Score 0-2 if no EU presence.
 2. Industry Fit (high weight): Fashion, streetwear, lifestyle, apparel, footwear, \
 or accessories. Non-fashion companies score 1-3 regardless of other factors.
-3. Company Size (medium weight): 20-500 employees is the sweet spot. Very small \
-(<10) lack budget. Very large (>1000) typically build in-house or use enterprise \
-solutions.
-4. Premium Positioning (medium weight): Premium or mid-premium products indicate \
+3. Premium Positioning (medium weight): Premium or mid-premium products indicate \
 brand protection needs and willingness to invest in brand experience.
-5. Sustainability Focus (medium weight): Companies with existing sustainability \
+4. Sustainability Focus (medium weight): Companies with existing sustainability \
 commitments are natural early adopters. They already collect supply chain data and \
 care about transparency.
-6. Direct-to-Consumer Presence (lower weight): DTC brands benefit most from \
+5. Direct-to-Consumer Presence (lower weight): DTC brands benefit most from \
 post-purchase engagement features (care guides, resale, brand storytelling via DPP).
 
 Score 8-10: Strong fit across most criteria. Ideal prospect.

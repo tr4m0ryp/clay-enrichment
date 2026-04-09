@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _CYCLE_INTERVAL = 240
 _CONCURRENCY = 5  # max contact-campaign pairs scored in parallel
 _EMPTY_COMPANY: dict = {
-    "company_name": "", "industry": "Other", "company_size": "",
+    "company_name": "", "industry": "Other",
     "location": "", "company_fit_score": 0,
 }
 
@@ -45,13 +45,11 @@ def _blocks_to_text(blocks: list[dict]) -> str:
 
 def _extract_contact_fields(contact: dict) -> dict:
     """Extract denormalized contact fields from a contact page."""
-    phone_prop = contact.get("properties", {}).get("Phone", {})
     return {
         "contact_name": extract_title(contact, "Name"),
         "job_title": extract_rich_text(contact, "Job Title"),
         "email": extract_email(contact, "Email"),
         "email_verified": extract_checkbox(contact, "Email Verified"),
-        "phone": phone_prop.get("phone_number") or "",
         "linkedin_url": extract_url(contact, "LinkedIn URL"),
     }
 
@@ -61,7 +59,6 @@ def _extract_company_fields(company: dict) -> dict:
     return {
         "company_name": extract_title(company, "Name"),
         "industry": extract_select(company, "Industry") or "Other",
-        "company_size": extract_rich_text(company, "Size"),
         "location": extract_rich_text(company, "Location"),
         "company_fit_score": extract_number(company, "DPP Fit Score") or 0,
     }
@@ -177,9 +174,8 @@ async def _process_pair(
             campaign_name=campaign_name, job_title=cf["job_title"],
             company_name=company_fields.get("company_name", ""),
             email_addr=cf["email"], email_verified=cf["email_verified"],
-            phone=cf["phone"], linkedin_url=cf["linkedin_url"],
+            linkedin_url=cf["linkedin_url"],
             industry=company_fields.get("industry", "Other"),
-            company_size=company_fields.get("company_size", ""),
             location=company_fields.get("location", ""),
             company_fit_score=company_fields.get("company_fit_score", 0),
             relevance_score=sr["relevance_score"],
