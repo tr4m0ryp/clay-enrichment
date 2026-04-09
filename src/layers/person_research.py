@@ -16,6 +16,7 @@ from src.models.gemini import GeminiClient
 from src.notion.client import NotionClient
 from src.notion.databases_contacts import ContactsDB
 from src.notion.prop_helpers import (
+    extract_number,
     extract_title,
     extract_rich_text,
     extract_url,
@@ -27,6 +28,7 @@ from src.search.searxng import SearXNGClient, SearchResult
 
 logger = logging.getLogger(__name__)
 
+MIN_DPP_FIT_SCORE = 7
 _CYCLE_INTERVAL = 180  # seconds between worker cycles
 _CONCURRENCY = 5  # max contacts researched in parallel per cycle
 
@@ -119,14 +121,15 @@ def _build_research_blocks(research: dict) -> list[dict]:
 
 async def _fetch_company_info(
     notion_client: NotionClient, company_id: str,
-) -> tuple[str, str]:
-    """Retrieve company name and domain from a company page ID."""
+) -> tuple[str, str, float | None]:
+    """Retrieve company name, domain, and DPP Fit Score from a company page."""
     company_page = await notion_client._call(
         notion_client._sdk.pages.retrieve, page_id=company_id,
     )
     name = extract_title(company_page, "Name")
     website = extract_url(company_page, "Website")
-    return name, _extract_domain(website)
+    dpp_score = extract_number(company_page, "DPP Fit Score")
+    return name, _extract_domain(website), dpp_score
 
 
 async def _run_searches(
@@ -183,9 +186,18 @@ async def _research_contact(
         )
         return False
 
-    company_name, domain = await _fetch_company_info(
+    company_name, domain, dpp_score = await _fetch_company_info(
         notion_client, company_ids[0]
     )
+
+    # Gate: skip contacts whose company is below DPP fit score threshold
+    if not dpp_score or dpp_score < MIN_DPP_FIT_SCORE:
+        logger.info(
+            "Skipping research for '%s': company '%s' DPP Fit Score=%s (min=%d)",
+            contact_name, company_name, dpp_score, MIN_DPP_FIT_SCORE,
+        )
+        return False
+
     logger.info(
         "Researching '%s' (%s) at '%s'",
         contact_name, job_title, company_name,

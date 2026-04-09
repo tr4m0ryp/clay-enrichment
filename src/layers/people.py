@@ -24,6 +24,7 @@ from src.models.gemini import GeminiClient
 from src.notion.databases_companies import CompaniesDB
 from src.notion.databases_contacts import ContactsDB
 from src.notion.prop_helpers import (
+    extract_number,
     extract_title,
     extract_url,
     extract_relation_ids,
@@ -33,6 +34,7 @@ from src.prompts.people import PARSE_CONTACT_RESULTS
 
 logger = logging.getLogger(__name__)
 
+MIN_DPP_FIT_SCORE = 7
 _CYCLE_INTERVAL = 180  # seconds between worker cycles
 
 
@@ -246,6 +248,16 @@ async def people_worker(
             logger.info("People worker: found %d enriched companies", len(companies))
 
             for company in companies:
+                # Gate: skip companies below DPP fit score threshold
+                dpp_score = extract_number(company, "DPP Fit Score")
+                if not dpp_score or dpp_score < MIN_DPP_FIT_SCORE:
+                    company_name = extract_title(company, "Name")
+                    logger.info(
+                        "People worker: skipping '%s' (DPP Fit Score=%s, min=%d)",
+                        company_name, dpp_score, MIN_DPP_FIT_SCORE,
+                    )
+                    continue
+
                 try:
                     await discover_contacts_for_company(
                         company,
