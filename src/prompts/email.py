@@ -1,5 +1,8 @@
 """
 Layer 4 prompts: personalized cold outreach email generation.
+
+Uses person research context and campaign-specific personalized
+outreach angles for genuine, non-generic personalization.
 """
 
 from src.prompts.base_context import build_system_prompt
@@ -19,18 +22,34 @@ DPP platform is relevant to their business.
 
 {contacts}
 
+### Person Research and Personalized Context
+
+Each contact includes two critical personalization sources:
+
+1. **Person Research** -- This is research about the contact's professional \
+background, public activity (articles, talks, LinkedIn posts), and relevance \
+signals. Use specific findings from this research to open the email. Reference \
+a real fact: a talk they gave, a project they led, an initiative they champion. \
+Do NOT paraphrase generically -- cite the specific thing.
+
+2. **Personalized Outreach Angle** -- This is the campaign-specific reason why \
+this contact is a high-priority lead. Use this as the primary outreach angle. \
+It explains the connection between the contact's role/company and Avelero's \
+value proposition. Build the email's core argument around this angle.
+
 ### Instructions
 
 For each contact provided, generate a personalized cold email. Each email must:
 
-1. Open with a specific reference to the contact's company or role -- something \
-that proves you researched them. Use a fact from the company enrichment data \
-(a product they make, a sustainability initiative, their market presence).
+1. Open with a specific reference drawn from the person research. Pick the most \
+relevant fact about the contact personally -- something they said, published, or \
+worked on. This proves genuine research, not a mail merge. If person research is \
+sparse, fall back to a company-specific opening using enrichment data.
 
-2. Connect that fact to a DPP need. Explain why this specific company should care \
-about digital product passports right now. Reference the EU regulatory timeline \
-(mid-2028 compliance deadline, QR codes needed by Q3-Q4 2027) only if it adds \
-urgency -- do not force it into every email.
+2. Connect the personalized outreach angle to a DPP need. Use the angle provided \
+as the bridge between what this person cares about and what Avelero solves. \
+Reference the EU regulatory timeline (mid-2028 compliance deadline, QR codes \
+needed by Q3-Q4 2027) only if it adds urgency -- do not force it into every email.
 
 3. State what Avelero does in one sentence. Do not list features. Pick the one \
 capability most relevant to this company (e.g., Passport Designer for brands \
@@ -74,8 +93,10 @@ to reach out", "I came across your company", "In today's landscape".
 - No emojis. Ever.
 - No exclamation marks in the subject line.
 - No ALL CAPS words.
-- Reference at least one specific fact about the company (product type, market, \
-certification, sustainability claim).
+- Reference at least one specific fact from the person research (a talk, article, \
+initiative, or professional accomplishment). If no person research is available, \
+reference a specific fact about the company from enrichment data.
+- Use the personalized outreach angle as the core argument, not as a throwaway line.
 - Reference the contact's role if it is relevant (e.g., sustainability leads care \
 about LCA, operations leads care about supply chain data).
 - Do NOT mention competitors by name.
