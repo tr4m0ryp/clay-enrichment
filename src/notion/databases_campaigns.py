@@ -20,7 +20,7 @@ from src.notion.prop_helpers import (
 logger = logging.getLogger(__name__)
 
 # Valid status values for campaigns
-CAMPAIGN_STATUSES = ("Active", "Paused", "Completed")
+CAMPAIGN_STATUSES = ("Active", "Paused", "Completed", "Abort")
 
 
 class CampaignsDB:
@@ -60,6 +60,28 @@ class CampaignsDB:
         filter_obj = {
             "property": "Status",
             "select": {"equals": "Active"},
+        }
+        return await self._client.query_database(self._db_id, filter_obj=filter_obj)
+
+    async def get_processable_campaigns(self) -> list[dict]:
+        """
+        Fetch campaigns eligible for enrichment processing.
+
+        Returns campaigns with Status in (Active, Paused, Completed) --
+        everything except Abort. These campaigns allow enrichment layers
+        (company enrichment, people search, person research, campaign
+        scoring, email generation) to run, but discovery and sending
+        are restricted to Active only.
+
+        Returns:
+            List of Notion page objects for processable campaigns.
+        """
+        filter_obj = {
+            "or": [
+                {"property": "Status", "select": {"equals": "Active"}},
+                {"property": "Status", "select": {"equals": "Paused"}},
+                {"property": "Status", "select": {"equals": "Completed"}},
+            ]
         }
         return await self._client.query_database(self._db_id, filter_obj=filter_obj)
 

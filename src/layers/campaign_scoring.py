@@ -200,9 +200,9 @@ async def campaign_scoring_worker(
     logger.info("Campaign scoring worker started")
     while True:
         try:
-            campaigns = await campaigns_db.get_active_campaigns()
+            campaigns = await campaigns_db.get_processable_campaigns()
             if not campaigns:
-                logger.debug("Campaign scoring: no active campaigns")
+                logger.debug("Campaign scoring: no processable campaigns")
                 await asyncio.sleep(_CYCLE_INTERVAL)
                 continue
 

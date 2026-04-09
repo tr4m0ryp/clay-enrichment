@@ -133,8 +133,10 @@ def _build_campaigns_section(campaigns_db_id: str) -> list[dict]:
               "and set Status to Active.\n", italic=True),
         _text("Edit a campaign: "),
         _text("Click the campaign row and modify any properties.\n", italic=True),
-        _text("Pause / resume: "),
-        _text("Change the Status property to Paused or Active.\n\n", italic=True),
+        _text("Statuses: "),
+        _text("Active = full pipeline (discovery + enrichment + sending). "
+              "Paused/Completed = enrichment continues but no new discovery or sending. "
+              "Abort = all processing stops.\n\n", italic=True),
         _text("Tip: right-click the database link below and select "
               "'Turn into inline' for an embedded editable view.", bold=True),
     ]
