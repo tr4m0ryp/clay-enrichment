@@ -36,10 +36,14 @@ from src.layers.people import (
     people_worker,
     NotionClients as PeopleNotionClients,
 )
+from src.layers.person_research import person_research_worker
+from src.layers.campaign_scoring import campaign_scoring_worker
 from src.layers.email_gen import email_gen_worker
 from src.email.sender import email_sender_worker
 from src.notion.dashboard import setup_dashboard
 from src.layers.dashboard_worker import dashboard_stats_worker
+from src.notion.databases_contact_campaigns import ContactCampaignsDB
+from src.notion.leads_pages import refresh_leads_pages
 
 logger: logging.Logger | None = None
 
@@ -49,14 +53,7 @@ RESTART_DELAY_SECONDS = 30.0
 
 
 def _get_shutdown_event() -> asyncio.Event:
-    """Return the shutdown event, creating it if needed.
-
-    Creates a new Event bound to the current running loop. This avoids
-    issues with module-level Event objects becoming bound to stale loops.
-
-    Returns:
-        The global shutdown asyncio.Event.
-    """
+    """Return the shutdown event, creating it lazily for the current loop."""
     global shutdown_event
     if shutdown_event is None:
         shutdown_event = asyncio.Event()
@@ -64,14 +61,7 @@ def _get_shutdown_event() -> asyncio.Event:
 
 
 def _validate_config(config: Config) -> None:
-    """Validate that all required config fields are set. Exits on failure.
-
-    Args:
-        config: The loaded application configuration.
-
-    Raises:
-        SystemExit: If required configuration is missing.
-    """
+    """Validate required config fields are set. Exits on failure."""
     required = {
         "GEMINI_API_KEY": config.gemini_api_key,
         "NOTION_API_KEY": config.notion_api_key,
@@ -87,11 +77,7 @@ def _validate_config(config: Config) -> None:
 
 
 def _log_startup_summary(config: Config) -> None:
-    """Log a startup summary with non-secret configuration info.
-
-    Args:
-        config: The loaded application configuration.
-    """
+    """Log a startup summary with non-secret configuration info."""
     assert logger is not None
     logger.info("--- Avelero Clay Enrichment starting ---")
     logger.info("Models: discovery=%s enrichment=%s scoring=%s contact=%s email=%s",
@@ -105,21 +91,12 @@ def _log_startup_summary(config: Config) -> None:
     logger.info("Senders configured: %d (daily limit %d per sender)",
                 len(config.senders), config.email_daily_limit)
     logger.info("Enrichment stale threshold: %d days", config.enrichment_stale_days)
+    logger.info("Contact-Campaigns DB: %s", config.notion_contact_campaigns_db_id or "(auto)")
+    logger.info("Leads page: %s", config.notion_leads_page_id or "(auto)")
 
 
 async def supervised_worker(name: str, worker_fn, *args, **kwargs) -> None:
-    """Run a worker function with automatic restart on crash.
-
-    If the worker raises an exception, logs the error and restarts
-    after a 30-second delay. Respects the global shutdown_event to
-    stop cleanly.
-
-    Args:
-        name: Human-readable name for the worker (used in logs).
-        worker_fn: The async worker coroutine to run.
-        *args: Positional arguments forwarded to worker_fn.
-        **kwargs: Keyword arguments forwarded to worker_fn.
-    """
+    """Run a worker with automatic restart on crash (30s delay)."""
     assert logger is not None
     evt = _get_shutdown_event()
     while not evt.is_set():
@@ -144,14 +121,7 @@ async def supervised_worker(name: str, worker_fn, *args, **kwargs) -> None:
 
 
 def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
-    """Install SIGINT and SIGTERM handlers for graceful shutdown.
-
-    Sets the shutdown_event so workers can exit their loops, then
-    cancels all running tasks.
-
-    Args:
-        loop: The running asyncio event loop.
-    """
+    """Install SIGINT/SIGTERM handlers for graceful shutdown."""
     def _handle_signal(sig_name: str) -> None:
         if logger:
             logger.info("Received %s, shutting down...", sig_name)
@@ -162,6 +132,31 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, _handle_signal, sig.name)
+
+
+_LEADS_REFRESH_INTERVAL = 300  # seconds between leads page refreshes
+
+
+async def _leads_refresh_loop(
+    notion_client: NotionClient,
+    contact_campaigns_db,
+    campaigns_db,
+    leads_page_id: str,
+) -> None:
+    """Periodically refresh the High Priority Leads pages."""
+    log = get_logger("leads_refresh")
+    log.info("Leads refresh loop started (interval=%ds)", _LEADS_REFRESH_INTERVAL)
+    while True:
+        if leads_page_id:
+            try:
+                await refresh_leads_pages(
+                    notion_client, contact_campaigns_db, campaigns_db, leads_page_id,
+                )
+            except Exception as exc:
+                log.error("Leads refresh failed: %s", exc)
+        else:
+            log.warning("No leads_page_id configured, skipping refresh")
+        await asyncio.sleep(_LEADS_REFRESH_INTERVAL)
 
 
 async def main() -> None:
@@ -222,6 +217,13 @@ async def main() -> None:
     if db_ids.get("emails"):
         emails_db.db_id = db_ids["emails"]
 
+    # Contact-Campaigns junction DB
+    cc_db_id = db_ids.get("contact_campaigns") or config.notion_contact_campaigns_db_id
+    contact_campaigns_db = ContactCampaignsDB(client=notion_client, db_id=cc_db_id)
+
+    # Leads page ID (for refresh_leads_pages worker)
+    leads_page_id = db_ids.get("leads_page") or config.notion_leads_page_id
+
     # Build per-worker notion client aggregates
     discovery_notion = DiscoveryNotionClients(
         campaigns=campaigns_db, companies=companies_db
@@ -229,11 +231,6 @@ async def main() -> None:
     people_notion = PeopleNotionClients(
         companies=companies_db, contacts=contacts_db
     )
-    email_gen_dbs = {
-        "campaigns": campaigns_db,
-        "contacts": contacts_db,
-        "emails": emails_db,
-    }
     sender_notion = SimpleNamespace(
         emails=emails_db,
         contacts=contacts_db,
@@ -243,43 +240,33 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     _install_signal_handlers(loop)
 
-    logger.info("Launching 6 workers")
+    workers = [
+        ("discovery", discovery_worker,
+         [config, gemini, discovery_notion, search_client]),
+        ("enrichment", enrichment_worker,
+         [config, gemini, notion_client, companies_db, campaigns_db, scraper]),
+        ("people", people_worker,
+         [config, gemini, people_notion, contact_finder, email_permutator, smtp_verifier]),
+        ("person_research", person_research_worker,
+         [config, gemini, notion_client, contacts_db, search_client]),
+        ("campaign_scoring", campaign_scoring_worker,
+         [config, gemini, notion_client, contacts_db, companies_db, campaigns_db,
+          contact_campaigns_db]),
+        ("email_gen", email_gen_worker,
+         [config, gemini, notion_client, contacts_db, campaigns_db, emails_db,
+          contact_campaigns_db]),
+        ("email_sender", email_sender_worker, [config, sender_notion]),
+        ("leads_refresh", _leads_refresh_loop,
+         [notion_client, contact_campaigns_db, campaigns_db, leads_page_id]),
+        ("dashboard_stats", dashboard_stats_worker,
+         [notion_client, campaigns_db, companies_db, contacts_db, emails_db]),
+    ]
+    logger.info("Launching %d workers", len(workers))
 
-    # Launch all workers with supervision
     try:
-        await asyncio.gather(
-            supervised_worker(
-                "discovery",
-                discovery_worker,
-                config, gemini, discovery_notion, search_client,
-            ),
-            supervised_worker(
-                "enrichment",
-                enrichment_worker,
-                config, gemini, notion_client, companies_db, campaigns_db, scraper,
-            ),
-            supervised_worker(
-                "people",
-                people_worker,
-                config, gemini, people_notion,
-                contact_finder, email_permutator, smtp_verifier,
-            ),
-            supervised_worker(
-                "email_gen",
-                email_gen_worker,
-                config, gemini, notion_client, email_gen_dbs,
-            ),
-            supervised_worker(
-                "email_sender",
-                email_sender_worker,
-                config, sender_notion,
-            ),
-            supervised_worker(
-                "dashboard_stats",
-                dashboard_stats_worker,
-                notion_client, campaigns_db, companies_db, contacts_db, emails_db,
-            ),
-        )
+        await asyncio.gather(*(
+            supervised_worker(name, fn, *args) for name, fn, args in workers
+        ))
     except asyncio.CancelledError:
         pass
 
