@@ -25,6 +25,7 @@ from src.notion.prop_helpers import (
     extract_title,
     extract_relation_ids,
     extract_email,
+    extract_select,
     rich_text_prop,
     select_prop,
     date_prop,
@@ -47,31 +48,10 @@ __all__ = [
 
 
 def _send_smtp(
-    smtp_host: str,
-    smtp_port: int,
-    sender: SenderAccount,
-    recipient: str,
-    subject: str,
-    body: str,
+    smtp_host: str, smtp_port: int, sender: SenderAccount,
+    recipient: str, subject: str, body: str,
 ) -> None:
-    """
-    Send a single email via SMTP with STARTTLS.
-
-    Opens a fresh connection for each email (connect, auth, send, close).
-
-    Args:
-        smtp_host: SMTP server hostname.
-        smtp_port: SMTP server port (typically 587).
-        sender: The SenderAccount to authenticate with.
-        recipient: The recipient email address.
-        subject: The email subject line.
-        body: The email body as plain text.
-
-    Raises:
-        smtplib.SMTPException: On any SMTP error.
-        OSError: On connection failure.
-        TimeoutError: If the connection or send exceeds the timeout.
-    """
+    """Send a single email via SMTP/STARTTLS (fresh connection per email)."""
     msg = EmailMessage()
     msg["From"] = sender.email
     msg["To"] = recipient
@@ -87,16 +67,7 @@ def _send_smtp(
 async def _get_recipient_email(
     email_page: dict, notion_clients: Any
 ) -> str:
-    """
-    Extract the recipient email from the Contact linked to an email page.
-
-    Args:
-        email_page: The Notion email page object.
-        notion_clients: Object with .contacts attribute (ContactsDB).
-
-    Returns:
-        The recipient email address, or empty string if not found.
-    """
+    """Extract recipient email from the Contact linked to an email page."""
     contact_ids = extract_relation_ids(email_page, "Contact")
     if not contact_ids:
         return ""
@@ -107,6 +78,29 @@ async def _get_recipient_email(
         client._sdk.pages.retrieve, page_id=contact_id
     )
     return extract_email(page, "Email")
+
+
+async def _is_campaign_active(
+    email_page: dict, notion_clients: Any
+) -> bool:
+    """Return True only if the email's campaign has Status=Active."""
+    campaign_ids = extract_relation_ids(email_page, "Campaign")
+    if not campaign_ids:
+        logger.warning("Email %s has no campaign relation, blocking send",
+                        email_page["id"])
+        return False
+    campaigns_db = getattr(notion_clients, "campaigns", None)
+    if campaigns_db is None:
+        return True  # cannot verify -- allow for backward compatibility
+    try:
+        client = campaigns_db._client
+        page = await client._call(
+            client._sdk.pages.retrieve, page_id=campaign_ids[0])
+        return extract_select(page, "Status") == "Active"
+    except Exception as exc:
+        logger.warning("Campaign status check failed for email %s: %s",
+                        email_page["id"], exc)
+        return False  # fail closed
 
 
 async def _update_junction_status(
@@ -131,27 +125,20 @@ async def _update_junction_status(
 
 
 async def _send_one(
-    email_page: dict,
-    sender_pool: SenderPool,
-    config: Config,
-    notion_clients: Any,
+    email_page: dict, sender_pool: SenderPool,
+    config: Config, notion_clients: Any,
 ) -> bool | None:
-    """
-    Attempt to send a single email and update Notion accordingly.
-
-    Args:
-        email_page: The Notion email page object.
-        sender_pool: The SenderPool for sender selection.
-        config: Application configuration.
-        notion_clients: Object with .emails, .contacts, and optionally
-            .contact_campaigns attributes.
-
-    Returns:
-        True on success, False on failure, None if skipped (no sender
-        or no recipient).
-    """
+    """Send one email. Returns True/False/None (skipped)."""
     page_id = email_page["id"]
     subject = extract_title(email_page, "Subject")
+
+    # Only send emails for Active campaigns
+    if not await _is_campaign_active(email_page, notion_clients):
+        logger.info(
+            "Skipping email '%s' (page %s): campaign is not Active",
+            subject, page_id,
+        )
+        return None
 
     sender = sender_pool.next_sender()
     if sender is None:
@@ -207,22 +194,10 @@ async def _send_one(
 
 
 async def send_batch(
-    approved: list[dict],
-    sender_pool: SenderPool,
-    config: Config,
-    notion_clients: Any,
+    approved: list[dict], sender_pool: SenderPool,
+    config: Config, notion_clients: Any,
 ) -> None:
-    """
-    Send a batch of approved emails with rotation, delays, and safety rails.
-
-    Stops sending if the fail rate reaches 15% or all senders are exhausted.
-
-    Args:
-        approved: List of approved email page objects from Notion.
-        sender_pool: The SenderPool managing sender rotation.
-        config: Application configuration.
-        notion_clients: Object with .emails and .contacts attributes.
-    """
+    """Send approved emails with rotation, delays, and fail-rate safety."""
     total = 0
     failures = 0
 
@@ -255,16 +230,7 @@ async def send_batch(
 
 
 async def email_sender_worker(config: Config, notion_clients: Any) -> None:
-    """
-    Main worker loop: polls for approved emails and sends with rotation.
-
-    Runs continuously. Sleeps when SMTP is not configured, outside
-    business hours, or when no approved emails are pending.
-
-    Args:
-        config: Application configuration with SMTP settings.
-        notion_clients: Object with .emails and .contacts database accessors.
-    """
+    """Main worker loop: polls for approved emails and sends with rotation."""
     sender_pool = SenderPool(config.senders, config.email_daily_limit)
 
     while True:
