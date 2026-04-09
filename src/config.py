@@ -39,6 +39,8 @@ class Config:
     notion_companies_db_id: str = ""
     notion_contacts_db_id: str = ""
     notion_emails_db_id: str = ""
+    notion_contact_campaigns_db_id: str = ""
+    notion_leads_page_id: str = ""
 
     # Email
     smtp_host: str = ""
@@ -85,6 +87,8 @@ def _load_config() -> Config:
         notion_companies_db_id=os.environ.get("NOTION_COMPANIES_DB_ID", "").strip(),
         notion_contacts_db_id=os.environ.get("NOTION_CONTACTS_DB_ID", "").strip(),
         notion_emails_db_id=os.environ.get("NOTION_EMAILS_DB_ID", "").strip(),
+        notion_contact_campaigns_db_id=os.environ.get("NOTION_CONTACT_CAMPAIGNS_DB_ID", "").strip(),
+        notion_leads_page_id=os.environ.get("NOTION_LEADS_PAGE_ID", "").strip(),
         smtp_host=os.environ.get("SMTP_HOST", "").strip(),
         smtp_port=int(os.environ.get("SMTP_PORT", "587")),
         senders=_discover_senders(),
