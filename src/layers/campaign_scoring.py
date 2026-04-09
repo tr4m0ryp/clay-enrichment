@@ -24,6 +24,7 @@ from src.prompts.campaign_scoring import SCORE_CONTACT_FOR_CAMPAIGN
 
 logger = logging.getLogger(__name__)
 _CYCLE_INTERVAL = 240
+_CONCURRENCY = 5  # max contact-campaign pairs scored in parallel
 _EMPTY_COMPANY: dict = {
     "company_name": "", "industry": "Other", "company_size": "",
     "location": "", "company_fit_score": 0,
@@ -218,21 +219,34 @@ async def campaign_scoring_worker(
                         len(contacts), len(campaigns))
             company_map = await _fetch_company_map(contacts, companies_db)
             scored = 0
-            for contact in contacts:
-                cids = extract_relation_ids(contact, "Company")
-                cid = cids[0] if cids else ""
-                cfields = company_map.get(cid, _EMPTY_COMPANY)
-                for campaign in campaigns:
+            scored_lock = asyncio.Lock()
+            sem = asyncio.Semaphore(_CONCURRENCY)
+
+            async def _bounded(contact: dict, campaign: dict,
+                               cfields: dict, cid: str) -> None:
+                nonlocal scored
+                async with sem:
                     try:
                         if await _process_pair(
                             contact, campaign, config, gemini_client,
                             notion_client, contact_campaigns_db, cfields, cid,
                         ):
-                            scored += 1
+                            async with scored_lock:
+                                scored += 1
                     except Exception as exc:
                         logger.error("Error scoring '%s' x '%s': %s",
                                      extract_title(contact, "Name"),
                                      extract_title(campaign, "Name"), exc)
+
+            tasks = []
+            for contact in contacts:
+                cids = extract_relation_ids(contact, "Company")
+                cid = cids[0] if cids else ""
+                cfields = company_map.get(cid, _EMPTY_COMPANY)
+                for campaign in campaigns:
+                    tasks.append(_bounded(contact, campaign, cfields, cid))
+            await asyncio.gather(*tasks)
+
             if scored:
                 logger.info("Campaign scoring cycle: %d pairs scored", scored)
         except Exception as exc:

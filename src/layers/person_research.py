@@ -28,6 +28,7 @@ from src.search.searxng import SearXNGClient, SearchResult
 logger = logging.getLogger(__name__)
 
 _CYCLE_INTERVAL = 180  # seconds between worker cycles
+_CONCURRENCY = 5  # max contacts researched in parallel per cycle
 
 
 def _extract_domain(website_url: str) -> str:
@@ -256,22 +257,27 @@ async def person_research_worker(
                 "Person research: found %d enriched contacts", len(contacts),
             )
 
-            for contact in contacts:
-                try:
-                    await _research_contact(
-                        contact, config, gemini_client,
-                        notion_client, contacts_db, search_client,
-                    )
-                except json.JSONDecodeError as exc:
-                    name = extract_title(contact, "Name")
-                    logger.error(
-                        "Failed to parse research for '%s': %s", name, exc
-                    )
-                except Exception as exc:
-                    name = extract_title(contact, "Name")
-                    logger.error(
-                        "Error researching contact '%s': %s", name, exc
-                    )
+            sem = asyncio.Semaphore(_CONCURRENCY)
+
+            async def _bounded(contact: dict) -> None:
+                async with sem:
+                    try:
+                        await _research_contact(
+                            contact, config, gemini_client,
+                            notion_client, contacts_db, search_client,
+                        )
+                    except json.JSONDecodeError as exc:
+                        name = extract_title(contact, "Name")
+                        logger.error(
+                            "Failed to parse research for '%s': %s", name, exc
+                        )
+                    except Exception as exc:
+                        name = extract_title(contact, "Name")
+                        logger.error(
+                            "Error researching contact '%s': %s", name, exc
+                        )
+
+            await asyncio.gather(*[_bounded(c) for c in contacts])
 
         except Exception as exc:
             logger.error("Person research worker cycle error: %s", exc)
