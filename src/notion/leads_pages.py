@@ -45,13 +45,12 @@ _LEADS_DB_SCHEMA: dict = {
     "Relevance Score": {"number": {"format": "number"}},
     "Score Reasoning": {"rich_text": {}},
     "Personalized Context": {"rich_text": {}},
+    "Context": {"rich_text": {}},
     "Email Subject": {"rich_text": {}},
     "Outreach Status": {
         "select": {"options": [{"name": s} for s in OUTREACH_STATUSES]},
     },
 }
-
-# -- Field extraction and conversion -----------------------------------------
 
 
 def _extract_fields(entry: dict) -> dict:
@@ -69,6 +68,7 @@ def _extract_fields(entry: dict) -> dict:
         "relevance_score": extract_number(entry, "Relevance Score") or 0,
         "score_reasoning": extract_rich_text(entry, "Score Reasoning"),
         "personalized_context": extract_rich_text(entry, "Personalized Context"),
+        "context": extract_rich_text(entry, "Context"),
         "email_subject": extract_rich_text(entry, "Email Subject"),
         "outreach_status": extract_select(entry, "Outreach Status"),
     }
@@ -100,6 +100,8 @@ def _fields_to_properties(f: dict) -> dict:
         props["Score Reasoning"] = rich_text_prop(f["score_reasoning"])
     if f["personalized_context"]:
         props["Personalized Context"] = rich_text_prop(f["personalized_context"])
+    if f["context"]:
+        props["Context"] = rich_text_prop(f["context"])
     if f["email_subject"]:
         props["Email Subject"] = rich_text_prop(f["email_subject"])
     if f["outreach_status"]:
@@ -109,21 +111,18 @@ def _fields_to_properties(f: dict) -> dict:
 
 # -- Block helpers (parent index only) ----------------------------------------
 
-def _heading2(text: str) -> dict:
-    return {"object": "block", "type": "heading_2",
-            "heading_2": {"rich_text": [{"type": "text", "text": {"content": text}}]}}
+def _rich(text: str) -> list:
+    return [{"type": "text", "text": {"content": text}}]
 
+def _heading2(text: str) -> dict:
+    return {"object": "block", "type": "heading_2", "heading_2": {"rich_text": _rich(text)}}
 
 def _heading3(text: str) -> dict:
-    return {"object": "block", "type": "heading_3",
-            "heading_3": {"rich_text": [{"type": "text", "text": {"content": text}}]}}
-
+    return {"object": "block", "type": "heading_3", "heading_3": {"rich_text": _rich(text)}}
 
 def _paragraph(content: str) -> dict:
     return {"object": "block", "type": "paragraph",
-            "paragraph": {"rich_text": [{"type": "text",
-             "text": {"content": content}}] if content else []}}
-
+            "paragraph": {"rich_text": _rich(content) if content else []}}
 
 def _divider() -> dict:
     return {"object": "block", "type": "divider", "divider": {}}

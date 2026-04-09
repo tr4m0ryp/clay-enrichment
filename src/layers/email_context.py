@@ -76,6 +76,9 @@ def text_to_body_blocks(text: str) -> list[dict]:
 def build_contact_context(contact: dict, contact_body: str) -> str:
     """Build a text summary of a contact for the LLM prompt.
 
+    Reads the structured Context property first (concise summary from
+    person research). Falls back to full page body if Context is empty.
+
     Args:
         contact: Notion contact page object.
         contact_body: Plain text from the contact's page body
@@ -86,9 +89,12 @@ def build_contact_context(contact: dict, contact_body: str) -> str:
     """
     name = extract_title(contact, "Name")
     job_title = extract_rich_text(contact, "Job Title")
+    context = extract_rich_text(contact, "Context")
     parts = [f"Name: {name}"]
     if job_title:
         parts.append(f"Job Title: {job_title}")
+    if context:
+        parts.append(f"Context: {context}")
     if contact_body:
         parts.append(f"Person Research:\n{contact_body}")
     return "\n".join(parts)
