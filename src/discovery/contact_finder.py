@@ -1,7 +1,7 @@
 """Contact discovery via Google search.
 
 Finds people at companies by searching Google for LinkedIn profiles
-and leadership pages, then extracts names and titles from results.
+and company team pages, then extracts names and titles from results.
 """
 
 from __future__ import annotations
@@ -12,30 +12,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_TARGET_TITLES = [
-    "CEO",
-    "Founder",
-    "Head of Sustainability",
-    "Head of Operations",
-    "COO",
-    "Head of Product",
-    "Supply Chain Manager",
-]
-
-_LEADERSHIP_TERMS = [
-    "head of",
-    "director",
-    "founder",
-    "co-founder",
-    "chief",
-    "ceo",
-    "coo",
-    "cto",
-    "vp",
-    "president",
-    "manager",
-]
 
 
 @dataclass
@@ -63,50 +39,42 @@ class ContactFinder:
     """Finds contacts at a company using Google search."""
 
     def __init__(self, search_client: SearchClient) -> None:
-        """Initialize with a search client instance.
-
-        Args:
-            search_client: Any object implementing the SearchClient protocol
-                with an async search() method.
-        """
         self._search = search_client
 
     async def find_contacts(
         self,
         company_name: str,
         domain: str,
-        target_titles: list[str] | None = None,
     ) -> list[RawContact]:
-        """Search Google for people at a company.
+        """Search for people at a company using broad queries.
 
-        Args:
-            company_name: The company name to search for.
-            domain: The company domain (used for context, not filtering).
-            target_titles: Job titles to search for. Uses DEFAULT_TARGET_TITLES
-                if not provided.
-
-        Returns:
-            Deduplicated list of RawContact objects found in search results.
+        Returns deduplicated list of RawContact objects.
         """
-        if target_titles is None:
-            target_titles = DEFAULT_TARGET_TITLES
-
         contacts: list[RawContact] = []
 
-        # Strategy 1: LinkedIn profile searches for each target title
-        for title in target_titles:
-            query = f'site:linkedin.com/in "{company_name}" "{title}"'
-            results = await self._run_search(query)
-            parsed = self._parse_linkedin_results(results, title)
+        # Strategy 1: Company team/people page search
+        if domain:
+            team_query = (
+                f'"{company_name}" team OR people OR about OR staff '
+                f"site:{domain}"
+            )
+            results = await self._run_search(team_query)
+            parsed = self._parse_general_results(results, company_name)
             contacts.extend(parsed)
 
-        # Strategy 2: General leadership search
-        leadership_query = (
-            f'"{company_name}" '
-            f'"head of" OR "director" OR "founder" OR "CEO" OR "COO"'
+        # Strategy 2: Broad LinkedIn company search
+        linkedin_query = f'site:linkedin.com/in "{company_name}"'
+        results = await self._run_search(linkedin_query)
+        parsed = self._parse_linkedin_results(results)
+        contacts.extend(parsed)
+
+        # Strategy 3: LinkedIn department search (relevant functions)
+        dept_query = (
+            f'site:linkedin.com/in "{company_name}" '
+            f"sustainability OR product OR operations OR supply chain"
         )
-        results = await self._run_search(leadership_query)
-        parsed = self._parse_general_results(results, company_name)
+        results = await self._run_search(dept_query)
+        parsed = self._parse_linkedin_results(results)
         contacts.extend(parsed)
 
         deduped = self._deduplicate(contacts)
@@ -116,14 +84,7 @@ class ContactFinder:
         return deduped
 
     async def _run_search(self, query: str) -> list[dict]:
-        """Execute a search query with error handling.
-
-        Args:
-            query: The search query string.
-
-        Returns:
-            List of result dicts, or empty list on error.
-        """
+        """Execute a search query, returning empty list on error."""
         try:
             return await self._search.search(query, num_results=10)
         except Exception:
@@ -131,22 +92,14 @@ class ContactFinder:
             return []
 
     def _parse_linkedin_results(
-        self, results: list[dict], target_title: str
+        self, results: list[dict]
     ) -> list[RawContact]:
-        """Extract contacts from LinkedIn search results.
-
-        Args:
-            results: Search result dicts with 'title', 'link', 'snippet'.
-            target_title: The title that was searched for.
-
-        Returns:
-            List of RawContact objects parsed from the results.
-        """
+        """Extract contacts from LinkedIn search results."""
         contacts = []
         for result in results:
-            link = getattr(result, "url", "") or (result.get("link", "") if isinstance(result, dict) else "")
-            title_text = getattr(result, "title", "") or (result.get("title", "") if isinstance(result, dict) else "")
-            snippet = getattr(result, "snippet", "") or (result.get("snippet", "") if isinstance(result, dict) else "")
+            link = self._get_field(result, "link", "url")
+            title_text = self._get_field(result, "title")
+            snippet = self._get_field(result, "snippet")
 
             if "linkedin.com/in/" not in link:
                 continue
@@ -155,9 +108,7 @@ class ContactFinder:
             if not name:
                 continue
 
-            extracted_title = self._extract_title(
-                snippet, title_text, target_title
-            )
+            extracted_title = self._extract_title(snippet, title_text)
 
             contacts.append(
                 RawContact(
@@ -172,25 +123,16 @@ class ContactFinder:
     def _parse_general_results(
         self, results: list[dict], company_name: str
     ) -> list[RawContact]:
-        """Extract contacts from general (non-LinkedIn) search results.
-
-        Args:
-            results: Search result dicts with 'title', 'link', 'snippet'.
-            company_name: The company being searched.
-
-        Returns:
-            List of RawContact objects parsed from the results.
-        """
+        """Extract contacts from general (non-LinkedIn) search results."""
         contacts = []
         for result in results:
-            link = getattr(result, "url", "") or (result.get("link", "") if isinstance(result, dict) else "")
-            title_text = getattr(result, "title", "") or (result.get("title", "") if isinstance(result, dict) else "")
-            snippet = getattr(result, "snippet", "") or (result.get("snippet", "") if isinstance(result, dict) else "")
+            link = self._get_field(result, "link", "url")
+            title_text = self._get_field(result, "title")
+            snippet = self._get_field(result, "snippet")
 
             is_linkedin = "linkedin.com/in/" in link
             combined_text = f"{title_text} {snippet}"
 
-            # Look for name-title patterns in the text
             extracted = self._extract_name_and_title_from_text(
                 combined_text, company_name
             )
@@ -205,32 +147,34 @@ class ContactFinder:
                 )
         return contacts
 
-    def _extract_name_from_linkedin_title(self, title: str) -> str | None:
-        """Extract a person's name from a LinkedIn page title.
+    @staticmethod
+    def _get_field(result: dict, *keys: str) -> str:
+        """Extract a field from a result that may be a dict or object.
 
-        LinkedIn titles typically follow the pattern:
-        'First Last - Title - Company | LinkedIn'
-
-        Args:
-            title: The page title string.
-
-        Returns:
-            The extracted name, or None if not parseable.
+        Tries attribute access first, then dict access, for each key.
         """
-        # Strip common LinkedIn suffixes
+        for key in keys:
+            val = getattr(result, key, None)
+            if val:
+                return val
+            if isinstance(result, dict):
+                val = result.get(key, "")
+                if val:
+                    return val
+        return ""
+
+    def _extract_name_from_linkedin_title(self, title: str) -> str | None:
+        """Extract name from LinkedIn title ('First Last - Title | LinkedIn')."""
         cleaned = re.sub(
             r"\s*[\|\-]\s*LinkedIn.*$", "", title, flags=re.IGNORECASE
         )
 
-        # Take the first segment before a dash or pipe
         parts = re.split(r"\s*[\|\-]\s*", cleaned)
         if not parts:
             return None
 
         name_candidate = parts[0].strip()
 
-        # Basic validation: at least 2 characters, contains a space
-        # (first + last name), no digits
         if (
             len(name_candidate) < 2
             or not re.search(r"[a-zA-Z]", name_candidate)
@@ -240,58 +184,47 @@ class ContactFinder:
 
         return name_candidate
 
-    def _extract_title(
-        self, snippet: str, page_title: str, fallback_title: str
-    ) -> str:
-        """Extract job title from search result text.
+    def _extract_title(self, snippet: str, page_title: str) -> str | None:
+        """Extract job title from result text. Accepts any role, not just leadership."""
+        # LinkedIn page titles: "Name - Title - Company | LinkedIn"
+        parts = re.split(r"\s*[\|\-]\s*", page_title)
+        if len(parts) >= 2:
+            candidate = parts[1].strip()
+            # Accept if it looks like a job title (not just a company name)
+            if candidate and not candidate.lower().startswith("linkedin"):
+                return candidate
 
-        Args:
-            snippet: The search result snippet.
-            page_title: The search result page title.
-            fallback_title: The title that was searched for, used as fallback.
+        # Try common "Title at Company" patterns in snippet
+        match = re.search(
+            r"(?:^|\.\s+|,\s+)"
+            r"([A-Z][A-Za-z /&]+(?:of|at|for|,)\s+\w+)",
+            snippet,
+        )
+        if match:
+            return match.group(1).strip()
 
-        Returns:
-            The best title found, or the fallback.
-        """
-        combined = f"{page_title} {snippet}".lower()
-        for term in _LEADERSHIP_TERMS:
-            if term in combined:
-                # Try to extract the full title phrase
-                pattern = rf"({term}\s+(?:of\s+)?\w+(?:\s+\w+)?)"
-                match = re.search(pattern, combined, re.IGNORECASE)
-                if match:
-                    return match.group(1).strip().title()
-        return fallback_title
+        return None
 
     def _extract_name_and_title_from_text(
         self, text: str, company_name: str
     ) -> list[tuple[str, str]]:
-        """Extract name-title pairs from unstructured text.
-
-        Looks for patterns like 'Name, Title at Company' or
-        'Name - Title - Company'.
-
-        Args:
-            text: The text to parse.
-            company_name: The company name for context matching.
-
-        Returns:
-            List of (name, title) tuples found in the text.
-        """
+        """Extract name-title pairs from unstructured text (broad matching)."""
         results = []
         company_lower = company_name.lower()
 
-        # Pattern: "Name, Title at/of Company"
+        # Pattern: "Name, Title at/of Company" -- broad title matching
         pattern = (
             r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)"
             r",?\s+"
-            r"((?:CEO|COO|CTO|CFO|Founder|Co-Founder|Director|"
-            r"Head of \w+|VP of \w+|President|Manager)"
-            r"(?:\s+(?:of|at)\s+\w+)*)"
+            r"([A-Z][A-Za-z /&-]+(?:\s+(?:of|at|for)\s+\w+)*)"
         )
         for match in re.finditer(pattern, text):
             name = match.group(1).strip()
             title = match.group(2).strip()
+            # Filter out noise: title must be at least 3 chars and
+            # the company must appear somewhere in the text
+            if len(title) < 3:
+                continue
             context_after = text[match.end() : match.end() + 100].lower()
             if company_lower in context_after or company_lower in text.lower():
                 results.append((name, title))
@@ -299,17 +232,7 @@ class ContactFinder:
         return results
 
     def _deduplicate(self, contacts: list[RawContact]) -> list[RawContact]:
-        """Remove duplicate contacts by normalized name.
-
-        Keeps the first occurrence of each name (which tends to come from
-        the more specific LinkedIn search).
-
-        Args:
-            contacts: List of contacts to deduplicate.
-
-        Returns:
-            Deduplicated list preserving original order.
-        """
+        """Remove duplicate contacts by normalized name, keeping first seen."""
         seen: set[str] = set()
         unique: list[RawContact] = []
         for contact in contacts:
