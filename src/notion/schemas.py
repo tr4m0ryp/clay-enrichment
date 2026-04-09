@@ -27,7 +27,6 @@ def campaigns_schema() -> dict:
                 ]
             }
         },
-        "Base Context": {"rich_text": {}},
         "Created At": {"date": {}},
     }
 

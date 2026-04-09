@@ -3,7 +3,7 @@ Typed CRUD operations for the Campaigns Notion database.
 
 Schema:
     Name (title), Target Description (rich_text), Status (select),
-    Base Context (rich_text), Created At (date)
+    Created At (date)
 """
 
 import logging
@@ -67,7 +67,6 @@ class CampaignsDB:
         self,
         name: str,
         target_description: str = "",
-        base_context: str = "",
         status: str = "Active",
     ) -> dict:
         """
@@ -76,7 +75,6 @@ class CampaignsDB:
         Args:
             name: Campaign name (title).
             target_description: Description of the target audience.
-            base_context: Base context for email generation.
             status: Initial status (Active, Paused, or Completed).
 
         Returns:
@@ -92,7 +90,6 @@ class CampaignsDB:
             "Name": title_prop(name),
             "Target Description": rich_text_prop(target_description),
             "Status": select_prop(status),
-            "Base Context": rich_text_prop(base_context),
             "Created At": date_prop(),
         }
         result = await self._client.create_page(self._db_id, properties)
