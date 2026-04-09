@@ -71,6 +71,7 @@ def contact_campaigns_schema(
         "Relevance Score": {"number": {"format": "number"}},
         "Score Reasoning": {"rich_text": {}},
         "Personalized Context": {"rich_text": {}},
+        "Context": {"rich_text": {}},
         "Email Subject": {"rich_text": {}},
         "Outreach Status": {
             "select": {

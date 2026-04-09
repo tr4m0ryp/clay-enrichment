@@ -70,6 +70,20 @@ personalization.
   - "low": Few or no results clearly about this person. Outreach will rely \
 mostly on company-level data and job title.
 
+- context_summary: Summarize the person's role, key achievements, and 2-3 \
+specific personalization hooks. Max 500 characters. Format: \
+"Role | Background | Key hooks for outreach." This is a concise structured \
+summary that downstream layers (scoring, email generation) will read directly. \
+Focus on actionable facts: achievements, business activity, role indicators, \
+and personalization hooks relevant to DPP outreach. If research_quality is \
+"low", provide what you can from the job title and company alone.
+
+- determined_role: Based on all evidence in the search results, what is this \
+person's actual current role/title? If the search results reveal a more \
+accurate or up-to-date title than the one provided, return the corrected \
+version. If the provided title appears correct or no better information is \
+available, return the original title unchanged.
+
 ### Output Format
 
 Return a single JSON object. Nothing else -- no commentary, no markdown \
@@ -81,7 +95,9 @@ fences, no preamble.
     "public_activity": "Notable public mentions or empty string",
     "key_topics": ["topic1", "topic2"],
     "relevance_signals": "Facts useful for personalized outreach",
-    "research_quality": "high|medium|low"
+    "research_quality": "high|medium|low",
+    "context_summary": "Role | Background | Key hooks for outreach",
+    "determined_role": "Actual current role/title"
 }
 ```
 

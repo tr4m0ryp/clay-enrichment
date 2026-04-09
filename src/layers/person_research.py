@@ -22,6 +22,7 @@ from src.notion.prop_helpers import (
     extract_url,
     extract_relation_ids,
     select_prop,
+    rich_text_prop,
 )
 from src.prompts.person_research import RESEARCH_PERSON
 from src.search.searxng import SearXNGClient, SearchResult
@@ -239,10 +240,22 @@ async def _research_contact(
         contact_id, _build_research_blocks(research)
     )
 
-    # Update status to Researched
-    await contacts_db.update_contact(
-        contact_id, {"Status": select_prop("Researched")}
-    )
+    # Write context_summary to Contact's Context property
+    update_props: dict = {"Status": select_prop("Researched")}
+    context_summary = research.get("context_summary", "")
+    if context_summary:
+        update_props["Context"] = rich_text_prop(context_summary)
+
+    # Update Job Title if LLM determined a more accurate role
+    determined_role = research.get("determined_role", "")
+    if determined_role and determined_role != job_title:
+        update_props["Job Title"] = rich_text_prop(determined_role)
+        logger.info(
+            "Updated job title for '%s': '%s' -> '%s'",
+            contact_name, job_title, determined_role,
+        )
+
+    await contacts_db.update_contact(contact_id, update_props)
     logger.info("Contact '%s' researched and updated", contact_name)
     return True
 
