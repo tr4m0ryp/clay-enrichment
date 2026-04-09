@@ -72,11 +72,16 @@ async def _count_usable_contacts(
         return len(results)
     except Exception as exc:
         error_str = str(exc)
-        if "Score" in error_str or "property" in error_str.lower():
+        is_property_error = (
+            "Score" in error_str
+            or "property" in error_str.lower()
+            or "400" in error_str
+        )
+        if is_property_error:
             if not _score_warning_logged:
                 logger.warning(
-                    "Score property not found on contacts database; "
-                    "usable_contacts_count will be 0"
+                    "Score filter query failed (property may not exist); "
+                    "usable_contacts_count will be 0: %s", exc
                 )
                 _score_warning_logged = True
             return 0
