@@ -38,6 +38,8 @@ from src.layers.people import (
 )
 from src.layers.email_gen import email_gen_worker
 from src.email.sender import email_sender_worker
+from src.notion.dashboard import setup_dashboard
+from src.layers.dashboard_worker import dashboard_stats_worker
 
 logger: logging.Logger | None = None
 
@@ -197,6 +199,13 @@ async def main() -> None:
     logger.info("Notion databases ready: %s",
                 {k: v[:8] + "..." for k, v in db_ids.items() if v})
 
+    # Build dashboard layout (runs once on startup)
+    try:
+        await setup_dashboard(notion_client, config)
+        logger.info("Dashboard layout initialized")
+    except Exception:
+        logger.exception("Dashboard setup failed, continuing without dashboard")
+
     # Database wrappers (all pull their DB ID from config singleton)
     campaigns_db = CampaignsDB(notion_client)
     companies_db = CompaniesDB(notion_client)
@@ -234,7 +243,7 @@ async def main() -> None:
     loop = asyncio.get_running_loop()
     _install_signal_handlers(loop)
 
-    logger.info("Launching 5 workers")
+    logger.info("Launching 6 workers")
 
     # Launch all workers with supervision
     try:
@@ -264,6 +273,11 @@ async def main() -> None:
                 "email_sender",
                 email_sender_worker,
                 config, sender_notion,
+            ),
+            supervised_worker(
+                "dashboard_stats",
+                dashboard_stats_worker,
+                notion_client, campaigns_db, companies_db, contacts_db, emails_db,
             ),
         )
     except asyncio.CancelledError:
