@@ -38,9 +38,24 @@ def contact_campaigns_schema(
     """
     return {
         "Name": {"title": {}},
-        "Contact": {"relation": {"database_id": contacts_db_id}},
-        "Campaign": {"relation": {"database_id": campaigns_db_id}},
-        "Company": {"relation": {"database_id": companies_db_id}},
+        "Contact": {
+            "relation": {
+                "database_id": contacts_db_id,
+                "single_property": {},
+            }
+        },
+        "Campaign": {
+            "relation": {
+                "database_id": campaigns_db_id,
+                "single_property": {},
+            }
+        },
+        "Company": {
+            "relation": {
+                "database_id": companies_db_id,
+                "single_property": {},
+            }
+        },
         "Job Title": {"rich_text": {}},
         "Company Name": {"rich_text": {}},
         "Email": {"email": {}},
