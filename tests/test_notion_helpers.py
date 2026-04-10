@@ -16,7 +16,6 @@ from src.notion.prop_helpers import (
     number_prop,
     url_prop,
     email_prop,
-    phone_prop,
     checkbox_prop,
     date_prop,
     relation_prop,
@@ -65,9 +64,6 @@ class TestPropertyBuilders:
 
     def test_email_prop(self):
         assert email_prop("a@b.com") == {"email": "a@b.com"}
-
-    def test_phone_prop(self):
-        assert phone_prop("+1234") == {"phone_number": "+1234"}
 
     def test_checkbox_prop(self):
         assert checkbox_prop(True) == {"checkbox": True}

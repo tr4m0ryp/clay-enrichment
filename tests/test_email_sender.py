@@ -51,7 +51,10 @@ def _make_config(**overrides) -> Config:
 
 
 def _make_email_page(
-    page_id: str, subject: str, contact_id: str = "contact-1"
+    page_id: str,
+    subject: str,
+    contact_id: str = "contact-1",
+    campaign_id: str = "campaign-1",
 ) -> dict:
     """Build a minimal Notion email page dict for testing."""
     return {
@@ -59,6 +62,7 @@ def _make_email_page(
         "properties": {
             "Subject": {"title": [{"plain_text": subject}]},
             "Contact": {"relation": [{"id": contact_id}]},
+            "Campaign": {"relation": [{"id": campaign_id}]},
             "Status": {"select": {"name": "Approved"}},
         },
     }
@@ -68,8 +72,9 @@ def _make_notion_clients(
     approved: list[dict] | None = None,
     recipient_email: str = "recipient@example.com",
     body_blocks: list[dict] | None = None,
+    campaign_status: str = "Active",
 ) -> MagicMock:
-    """Build a mock notion_clients object with emails and contacts."""
+    """Build a mock notion_clients object with emails, contacts, campaigns."""
     mock = MagicMock()
 
     # emails DB
@@ -113,6 +118,24 @@ def _make_notion_clients(
         }
     )
     mock.contacts = contacts_db
+
+    # campaigns DB -- returns a campaign with the given status
+    campaigns_db = MagicMock()
+    campaigns_db._client = MagicMock()
+    campaigns_db._client._sdk = MagicMock()
+    campaigns_db._client._sdk.pages = MagicMock()
+    campaigns_db._client._call = AsyncMock(
+        return_value={
+            "id": "campaign-1",
+            "properties": {
+                "Status": {"select": {"name": campaign_status}},
+            },
+        }
+    )
+    mock.campaigns = campaigns_db
+
+    # contact_campaigns junction -- not used by most tests; disable via None
+    mock.contact_campaigns = None
 
     return mock
 

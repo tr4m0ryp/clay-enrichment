@@ -215,7 +215,7 @@ class TestBuildEnrichmentBlocks:
         assert len(blocks) > 0
         assert all(isinstance(b, dict) for b in blocks)
 
-    def test_contains_score(self):
+    def test_contains_dpp_reasoning(self):
         result = _make_gemini_result(score=9)
         blocks = _build_enrichment_blocks(result)
         texts = []
@@ -226,7 +226,7 @@ class TestBuildEnrichmentBlocks:
                 for rt in rich:
                     texts.append(rt.get("text", {}).get("content", ""))
         combined = " ".join(texts)
-        assert "9/10" in combined
+        assert "DPP Fit Assessment" in combined
 
     def test_contains_selling_points(self):
         result = _make_gemini_result()

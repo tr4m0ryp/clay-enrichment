@@ -49,12 +49,31 @@ def mock_limiter():
 async def test_client_query_pagination(mock_config, mock_notion_sdk, mock_limiter):
     """Verify query_database paginates through all results."""
     from src.notion.client import NotionClient
-    mock_notion_sdk.databases.query.side_effect = [
-        {"results": [{"id": "p1"}], "has_more": True, "next_cursor": "c1"},
-        {"results": [{"id": "p2"}], "has_more": False, "next_cursor": None},
+
+    # query_database uses raw httpx (not the SDK) so patch httpx.post.
+    responses = [
+        MagicMock(
+            json=MagicMock(return_value={
+                "results": [{"id": "p1"}],
+                "has_more": True,
+                "next_cursor": "c1",
+            }),
+            raise_for_status=MagicMock(),
+        ),
+        MagicMock(
+            json=MagicMock(return_value={
+                "results": [{"id": "p2"}],
+                "has_more": False,
+                "next_cursor": None,
+            }),
+            raise_for_status=MagicMock(),
+        ),
     ]
-    client = NotionClient(rate_limiter=mock_limiter)
-    results = await client.query_database("db-id")
+
+    with patch("httpx.post", side_effect=responses):
+        client = NotionClient(rate_limiter=mock_limiter)
+        results = await client.query_database("db-id")
+
     assert len(results) == 2
     assert mock_limiter.acquire.await_count == 2
 

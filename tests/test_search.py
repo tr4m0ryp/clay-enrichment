@@ -200,7 +200,7 @@ class TestGoogleSearchClient:
         with patch("src.search.google_search.aiohttp.ClientSession", return_value=mock_session):
             await client.search("test")
 
-        rl.acquire.assert_awaited_once_with("google_search")
+        rl.acquire.assert_awaited_once_with("google-custom-search")
 
 
 # ---------------------------------------------------------------------------

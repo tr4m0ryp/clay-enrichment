@@ -40,21 +40,8 @@ _google_pkg.genai = _genai_stub
 sys.modules["google.genai"] = _genai_stub
 sys.modules["google.genai.types"] = _genai_types_stub
 
-# ---------------------------------------------------------------------------
-# Stub src.utils.logger to avoid pulling in the real logging setup.
-# ---------------------------------------------------------------------------
-_logger_stub = builtin_types.ModuleType("src.utils.logger")
-_logger_stub.get_logger = lambda name: MagicMock()
-
-# Only add these stubs if src.utils is not already a real package.
-if "src.utils.logger" not in sys.modules:
-    sys.modules["src.utils.logger"] = _logger_stub
-if "src.utils" not in sys.modules:
-    _utils_pkg = builtin_types.ModuleType("src.utils")
-    _utils_pkg.__path__ = []
-    sys.modules["src.utils"] = _utils_pkg
-
-# Now it is safe to import GeminiClient.
+# Now it is safe to import GeminiClient. src.utils.logger exists in the
+# real package and has no heavy imports, so it does not need stubbing.
 from src.models.gemini import GeminiClient  # noqa: E402
 
 # Keep a reference so tests can swap out Client/GenerateContentConfig

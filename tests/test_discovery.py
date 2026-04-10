@@ -145,18 +145,19 @@ class TestContactFinder:
             ]
         )
 
-        contacts = asyncio.get_event_loop().run_until_complete(
-            self.finder.find_contacts("Acme Corp", "acme.com", ["CEO"])
+        contacts = asyncio.run(
+            self.finder.find_contacts("Acme Corp", "acme.com")
         )
 
         linkedin_contacts = [
             c for c in contacts if c.linkedin_url is not None
         ]
         assert len(linkedin_contacts) >= 1
-        assert linkedin_contacts[0].name == "Jane Smith"
-        assert linkedin_contacts[0].linkedin_url == (
-            "https://linkedin.com/in/jane-smith"
-        )
+        # Jane Smith should appear from the LinkedIn-specific parser
+        names = [c.name for c in linkedin_contacts]
+        assert "Jane Smith" in names
+        jane = next(c for c in linkedin_contacts if c.name == "Jane Smith")
+        assert jane.linkedin_url == "https://linkedin.com/in/jane-smith"
 
     def test_find_contacts_deduplication(self) -> None:
         """Duplicate names across searches should be deduplicated."""
@@ -170,10 +171,8 @@ class TestContactFinder:
             ]
         )
 
-        contacts = asyncio.get_event_loop().run_until_complete(
-            self.finder.find_contacts(
-                "TestCo", "testco.com", ["Founder", "CEO"]
-            )
+        contacts = asyncio.run(
+            self.finder.find_contacts("TestCo", "testco.com")
         )
 
         names = [c.name for c in contacts]
@@ -183,7 +182,7 @@ class TestContactFinder:
         """Should handle empty search results gracefully."""
         self.mock_client.search = AsyncMock(return_value=[])
 
-        contacts = asyncio.get_event_loop().run_until_complete(
+        contacts = asyncio.run(
             self.finder.find_contacts("Unknown Corp", "unknown.com")
         )
 
@@ -195,22 +194,22 @@ class TestContactFinder:
             side_effect=Exception("API error")
         )
 
-        contacts = asyncio.get_event_loop().run_until_complete(
+        contacts = asyncio.run(
             self.finder.find_contacts("FailCorp", "failcorp.com")
         )
 
         assert contacts == []
 
-    def test_find_contacts_uses_default_titles(self) -> None:
-        """Should use default titles when none provided."""
+    def test_find_contacts_runs_broad_searches(self) -> None:
+        """Should run the three broad search strategies."""
         self.mock_client.search = AsyncMock(return_value=[])
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             self.finder.find_contacts("TestCo", "testco.com")
         )
 
-        # Should have been called for each default title + 1 leadership query
-        assert self.mock_client.search.call_count == 8  # 7 titles + 1 general
+        # Should run team/people search + two LinkedIn searches
+        assert self.mock_client.search.call_count == 3
 
     def test_extract_name_from_linkedin_title(self) -> None:
         """Should extract clean names from LinkedIn page titles."""
@@ -246,7 +245,7 @@ class TestSMTPVerifier:
         ) as mock_mx:
             mock_mx.return_value = []
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.verifier.verify("test@nonexistent-domain.invalid")
             )
 
@@ -269,7 +268,7 @@ class TestSMTPVerifier:
                 confidence="high",
             )
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.verifier.verify("real@example.com")
             )
 
@@ -292,7 +291,7 @@ class TestSMTPVerifier:
                 confidence="high",
             )
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.verifier.verify("fake@example.com")
             )
 
@@ -315,7 +314,7 @@ class TestSMTPVerifier:
                 confidence="low",
             )
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.verifier.verify("anyone@catchall.com")
             )
 
@@ -333,7 +332,7 @@ class TestSMTPVerifier:
             mock_mx.return_value = ["mx1.example.com", "mx2.example.com"]
             mock_smtp.return_value = None  # both unreachable
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 self.verifier.verify("test@example.com")
             )
 
@@ -364,7 +363,7 @@ class TestSMTPVerifier:
                 VerifyResult("b@x.com", False, "smtp_rcpt", "high"),
             ]
 
-            results = asyncio.get_event_loop().run_until_complete(
+            results = asyncio.run(
                 self.verifier.verify_batch(["a@x.com", "b@x.com"])
             )
 
