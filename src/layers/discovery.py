@@ -10,13 +10,13 @@ Companies DB with dedup.
 import asyncio
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from src.models.gemini import GeminiClient
 from src.notion.databases_campaigns import CampaignsDB
 from src.notion.databases_companies import CompaniesDB
 from src.notion.prop_helpers import extract_title, extract_rich_text
 from src.prompts.discovery import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
-from typing import Any
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
