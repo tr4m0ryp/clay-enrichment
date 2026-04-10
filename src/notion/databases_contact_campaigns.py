@@ -211,12 +211,16 @@ class ContactCampaignsDB:
     async def get_high_priority(
         self, campaign_id: str, min_score: float = 7.0
     ) -> list[dict]:
-        """Return entries for campaign_id with Relevance Score >= min_score."""
+        """Return entries with both Relevance Score and Company Fit Score >= min_score."""
         filter_obj = {
             "and": [
                 {"property": "Campaign", "relation": {"contains": campaign_id}},
                 {
                     "property": "Relevance Score",
+                    "number": {"greater_than_or_equal_to": min_score},
+                },
+                {
+                    "property": "Company Fit Score",
                     "number": {"greater_than_or_equal_to": min_score},
                 },
             ]

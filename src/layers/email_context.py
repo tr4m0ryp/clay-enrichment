@@ -16,7 +16,6 @@ from src.notion.prop_helpers import (
     extract_title,
     extract_rich_text,
     extract_relation_ids,
-    extract_number,
 )
 
 logger = logging.getLogger(__name__)
@@ -174,32 +173,3 @@ def entry_has_email_subject(entry: dict) -> bool:
     return bool(subject and subject.strip())
 
 
-def build_enhanced_prompt_context(
-    company_context: str,
-    contact_contexts: list[str],
-    personalized_contexts: list[str],
-    campaign_target: str,
-) -> str:
-    """Build the full context block inserted into the email prompt.
-
-    Args:
-        company_context: Formatted company info string.
-        contact_contexts: List of formatted contact info strings.
-        personalized_contexts: Per-contact personalized outreach angles.
-        campaign_target: The campaign's target description.
-
-    Returns:
-        Combined context string for prompt interpolation.
-    """
-    parts = [f"## Company Context\n\n{company_context}\n"]
-    parts.append("## Contacts\n")
-
-    for i, (ct, pc) in enumerate(
-        zip(contact_contexts, personalized_contexts), 1
-    ):
-        parts.append(f"### Contact {i}\n{ct}")
-        if pc:
-            parts.append(f"Personalized Outreach Angle: {pc}")
-        parts.append("")
-
-    return "\n".join(parts)

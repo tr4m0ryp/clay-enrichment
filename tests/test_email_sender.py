@@ -7,6 +7,7 @@ All SMTP calls are mocked.
 """
 
 import asyncio
+import smtplib
 from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -447,9 +448,6 @@ async def test_send_batch_no_recipient_skips():
 
 
 # -- Worker loop tests --
-
-
-import smtplib
 
 
 @pytest.mark.asyncio
