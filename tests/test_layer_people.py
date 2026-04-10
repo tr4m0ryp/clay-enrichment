@@ -18,12 +18,14 @@ from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier, VerifyResult
 from src.layers.people import (
     NotionClients,
-    _extract_domain,
-    _split_name,
-    _verify_email_waterfall,
     _is_duplicate_contact,
     _parse_contacts_with_gemini,
     discover_contacts_for_company,
+)
+from src.layers.people_helpers import (
+    extract_domain as _extract_domain,
+    split_name as _split_name,
+    verify_email_waterfall as _verify_email_waterfall,
 )
 from src.notion.prop_helpers import (
     title_prop,
