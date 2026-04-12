@@ -7,12 +7,15 @@ import { SidebarProvider, useSidebar } from "@/lib/sidebar-context";
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const { collapsed } = useSidebar();
-  const marginLeft = collapsed ? 56 : 240;
 
   return (
     <div
-      className="flex flex-1 flex-col transition-[margin-left] duration-200"
-      style={{ marginLeft }}
+      className="flex flex-1 flex-col"
+      style={{
+        marginLeft: 240,
+        transform: collapsed ? "translateX(-184px)" : "translateX(0)",
+        transition: "transform 150ms ease-out",
+      }}
     >
       <Header />
       <main className="flex-1 p-6">{children}</main>

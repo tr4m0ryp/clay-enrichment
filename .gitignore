@@ -13,5 +13,7 @@ logs/
 *.key
 *.pem
 .DS_Store
+.next/
+node_modules/
 CLAUDE.md
 .dashboard_blocks.json
