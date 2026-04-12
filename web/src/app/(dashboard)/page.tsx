@@ -2,19 +2,13 @@ import { sql } from "@/lib/db";
 import { StatsCard } from "@/components/stats-card";
 import { CampaignSummary } from "@/components/campaign-summary";
 import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
   TableHeader,
   TableBody,
   TableRow,
   TableHead,
   TableCell,
 } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 
 export const dynamic = "force-dynamic";
@@ -152,55 +146,50 @@ export default async function DashboardPage() {
       <CampaignSummary rows={data.campaignRows} />
 
       {/* Recent activity */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Activity</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 pb-0">
-          {data.recentCompanies.length === 0 ? (
-            <p className="px-6 pb-6 text-sm text-muted-foreground">
-              No companies yet.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Company</TableHead>
-                  <TableHead>Industry</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Updated</TableHead>
+      <div>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">
+          Recent Activity
+        </h2>
+        <DataTable
+          count={data.recentCompanies.length}
+          empty="No companies yet."
+          colSpan={4}
+        >
+          <TableHeader>
+            <TableRow>
+              <TableHead>Company</TableHead>
+              <TableHead>Industry</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Updated</TableHead>
+            </TableRow>
+          </TableHeader>
+          {data.recentCompanies.length > 0 && (
+            <TableBody>
+              {data.recentCompanies.map((company) => (
+                <TableRow key={company.id}>
+                  <TableCell className="font-medium">
+                    {company.name}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {company.industry ?? "--"}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={companyStatusVariant(company.status)}>
+                      {company.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground tabular-nums">
+                    {new Date(company.updated_at).toLocaleDateString(
+                      "en-US",
+                      { month: "short", day: "numeric" },
+                    )}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.recentCompanies.map((company) => (
-                  <TableRow key={company.id}>
-                    <TableCell className="font-medium">
-                      {company.name}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {company.industry ?? "--"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={companyStatusVariant(company.status)}>
-                        {company.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground tabular-nums">
-                      {new Date(company.updated_at).toLocaleDateString(
-                        "en-US",
-                        {
-                          month: "short",
-                          day: "numeric",
-                        },
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+              ))}
+            </TableBody>
           )}
-        </CardContent>
-      </Card>
+        </DataTable>
+      </div>
     </div>
   );
 }

@@ -2,19 +2,19 @@ import Link from "next/link";
 import { getCompaniesByCampaign } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 
 function scoreColor(score: number | null): string {
-  if (score === null || score === undefined) return "";
-  if (score >= 7) return "text-primary font-semibold";
-  if (score >= 4) return "";
-  return "text-destructive font-semibold";
+  if (score === null || score === undefined) return "text-muted-foreground";
+  if (score >= 7) return "text-emerald-600 font-semibold";
+  if (score >= 4) return "text-foreground";
+  return "text-red-600 font-semibold";
 }
 
 function statusVariant(
@@ -47,75 +47,69 @@ export default async function CampaignCompaniesPage({
         Companies linked to this campaign.
       </p>
 
-      <div className="mt-6 rounded-lg border border-border overflow-hidden">
-        <Table>
+      <div className="mt-6">
+        <DataTable
+          count={companies.length}
+          empty="No companies linked to this campaign yet."
+          colSpan={6}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Website</TableHead>
               <TableHead>Industry</TableHead>
               <TableHead>Location</TableHead>
-              <TableHead>DPP Fit Score</TableHead>
+              <TableHead className="text-right">DPP Fit</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {companies.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No companies linked to this campaign yet.
-                </TableCell>
-              </TableRow>
-            )}
-            {companies.map((c: Record<string, unknown>) => (
-              <TableRow key={c.id as string} className="group">
-                <TableCell>
-                  <Link
-                    href={`/companies/${c.id}`}
-                    className="font-medium hover:underline"
-                  >
-                    {(c.name as string) || "--"}
-                  </Link>
-                </TableCell>
-                <TableCell>
-                  {c.website ? (
-                    <a
-                      href={c.website as string}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm"
+          {companies.length > 0 && (
+            <TableBody>
+              {companies.map((c: Record<string, unknown>) => (
+                <TableRow key={c.id as string}>
+                  <TableCell className="font-medium">
+                    <Link
+                      href={`/companies/${c.id}`}
+                      className="hover:text-primary hover:underline underline-offset-4"
                     >
-                      {(c.website as string).replace(/^https?:\/\//, "")}
-                    </a>
-                  ) : (
-                    <span className="text-muted-foreground">--</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {(c.industry as string) || "--"}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {(c.location as string) || "--"}
-                </TableCell>
-                <TableCell>
-                  <span className={scoreColor(c.dpp_fit_score as number)}>
-                    {c.dpp_fit_score !== null && c.dpp_fit_score !== undefined
-                      ? String(c.dpp_fit_score)
-                      : "--"}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  <Badge variant={statusVariant(c.status as string)}>
-                    {c.status as string}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                      {(c.name as string) || "--"}
+                    </Link>
+                  </TableCell>
+                  <TableCell>
+                    {c.website ? (
+                      <a
+                        href={c.website as string}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline underline-offset-4"
+                      >
+                        {(c.website as string).replace(/^https?:\/\//, "")}
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {(c.industry as string) || "--"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {(c.location as string) || "--"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <span className={scoreColor(c.dpp_fit_score as number)}>
+                      {c.dpp_fit_score != null ? String(c.dpp_fit_score) : "--"}
+                    </span>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(c.status as string)}>
+                      {c.status as string}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          )}
+        </DataTable>
       </div>
     </div>
   );

@@ -2,13 +2,13 @@ import Link from "next/link";
 import { getContactsByCampaign } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 
 function statusVariant(
   status: string,
@@ -40,69 +40,69 @@ export default async function CampaignContactsPage({
         Contacts linked to this campaign.
       </p>
 
-      <div className="mt-6 rounded-lg border border-border overflow-hidden">
-        <Table>
+      <div className="mt-6">
+        <DataTable
+          count={contacts.length}
+          empty="No contacts linked to this campaign yet."
+          colSpan={6}
+        >
           <TableHeader>
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Job Title</TableHead>
               <TableHead>Company</TableHead>
               <TableHead>Email</TableHead>
-              <TableHead>Email Verified</TableHead>
+              <TableHead>Verified</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
-          <TableBody>
-            {contacts.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No contacts linked to this campaign yet.
-                </TableCell>
-              </TableRow>
-            )}
-            {contacts.map((ct: Record<string, unknown>) => (
-              <TableRow key={ct.id as string}>
-                <TableCell>
-                  <Link
-                    href={`/contacts/${ct.id}`}
-                    className="font-medium hover:underline"
-                  >
-                    {(ct.name as string) || "--"}
-                  </Link>
-                </TableCell>
-                <TableCell className="text-sm">
-                  {(ct.job_title as string) || "--"}
-                </TableCell>
-                <TableCell>
-                  {ct.company_id ? (
+          {contacts.length > 0 && (
+            <TableBody>
+              {contacts.map((ct: Record<string, unknown>) => (
+                <TableRow key={ct.id as string}>
+                  <TableCell className="font-medium">
                     <Link
-                      href={`/companies/${ct.company_id}`}
-                      className="text-sm text-primary hover:underline"
+                      href={`/contacts/${ct.id}`}
+                      className="hover:text-primary hover:underline underline-offset-4"
                     >
-                      {(ct.company_name as string) || "--"}
+                      {(ct.name as string) || "--"}
                     </Link>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">--</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-sm">
-                  {(ct.email as string) || "--"}
-                </TableCell>
-                <TableCell className="text-sm text-center">
-                  {ct.email_verified ? "Yes" : "No"}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={statusVariant(ct.status as string)}>
-                    {ct.status as string}
-                  </Badge>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {(ct.job_title as string) || "--"}
+                  </TableCell>
+                  <TableCell>
+                    {ct.company_id ? (
+                      <Link
+                        href={`/companies/${ct.company_id}`}
+                        className="text-primary hover:underline underline-offset-4"
+                      >
+                        {(ct.company_name as string) || "--"}
+                      </Link>
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground font-mono text-xs">
+                    {(ct.email as string) || "--"}
+                  </TableCell>
+                  <TableCell>
+                    {ct.email_verified ? (
+                      <Badge variant="success" dot>Verified</Badge>
+                    ) : (
+                      <Badge variant="outline" dot>No</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(ct.status as string)}>
+                      {ct.status as string}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          )}
+        </DataTable>
       </div>
     </div>
   );
