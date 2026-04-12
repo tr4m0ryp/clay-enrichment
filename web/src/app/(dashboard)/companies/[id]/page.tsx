@@ -126,11 +126,11 @@ export default async function CompanyDetailPage({
                   >
                     {ct.name as string}
                   </Link>
-                  {ct.job_title && (
+                  {ct.job_title ? (
                     <span className="text-sm text-muted-foreground ml-2">
-                      -- {ct.job_title as string}
+                      -- {String(ct.job_title)}
                     </span>
-                  )}
+                  ) : null}
                 </li>
               ))}
             </ul>
