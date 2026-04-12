@@ -3,7 +3,7 @@ Layer 2: Company enrichment worker.
 
 Continuous async loop that picks up Discovered and stale companies,
 runs two-step Gemini grounding enrichment per company, then writes
-structured results back to Notion (properties + page body report).
+structured results back to Postgres (column updates + body text).
 
 Step 1: Grounded web research via Google Search (free text).
 Step 2: JSON structuring of research results.
@@ -13,23 +13,18 @@ Fallback: website scrape with legacy prompt on grounding failure.
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
-from src.notion.prop_helpers import (
-    select_prop,
-    date_prop,
-    extract_title,
-    extract_url,
-    extract_rich_text,
-    extract_relation_ids,
-)
+from src.db.campaigns import CampaignsDB
+from src.db.companies import CompaniesDB
 from src.prompts.enrichment import (
     RESEARCH_COMPANY_GROUNDED,
     STRUCTURE_COMPANY_ENRICHMENT,
 )
 from src.search.website_resolver import resolve_website
 from src.layers.enrichment_helpers import (
-    build_enrichment_blocks,
-    build_properties_update,
+    build_enrichment_text,
+    build_properties_update_pg,
     scrape_fallback,
 )
 
@@ -39,20 +34,20 @@ _CONCURRENCY = 3
 CYCLE_SLEEP_SECONDS = 120
 
 
-async def _get_campaign_target(company_page: dict, campaigns_db) -> str:
+async def _get_campaign_target(
+    company: dict, campaigns_db: CampaignsDB, companies_db: CompaniesDB,
+) -> str:
     """Retrieve the campaign target description for a company."""
-    campaign_ids = extract_relation_ids(company_page, "Campaign")
-    if not campaign_ids:
-        return ""
-
-    try:
-        campaigns = await campaigns_db.get_processable_campaigns()
-        for campaign in campaigns:
-            if campaign["id"] in campaign_ids:
-                return extract_rich_text(campaign, "Target Description")
-    except Exception as exc:
-        logger.warning("Failed to fetch campaign target: %s", exc)
-
+    # Look up campaigns linked to this company via company_campaigns join table
+    company_id = company["id"]
+    rows = await companies_db._pool.fetch(
+        "SELECT c.target_description FROM campaigns c "
+        "JOIN company_campaigns cc ON c.id = cc.campaign_id "
+        "WHERE cc.company_id = $1 LIMIT 1",
+        company_id,
+    )
+    if rows:
+        return rows[0]["target_description"] or ""
     return ""
 
 
@@ -109,37 +104,37 @@ async def _structure_research(
     )
 
     parsed = json.loads(text)
-    # Handle both single object and array-wrapped responses
     if isinstance(parsed, list) and len(parsed) == 1:
         parsed = parsed[0]
     return parsed
 
 
 async def _enrich_company(
-    company_page: dict,
-    config, gemini_client, notion_client, companies_db, campaigns_db,
-    scraper, search_client,
+    company: dict,
+    config, gemini_client, companies_db: CompaniesDB,
+    campaigns_db: CampaignsDB, scraper, search_client,
 ) -> None:
     """Enrich a single company with two-step grounded pipeline."""
-    name = extract_title(company_page, "Name")
-    page_id = company_page["id"]
-    existing_url = extract_url(company_page, "Website")
+    name = company.get("name", "")
+    page_id = str(company["id"])
+    existing_url = company.get("website", "")
 
     # Resolve website URL
     website = await resolve_website(name, search_client, existing_url=existing_url)
     if website and website != existing_url:
-        await companies_db.update_company(page_id, {"Website": {"url": website}})
+        await companies_db.update_company(page_id, {"website": website})
         logger.info("Resolved website for '%s': %s", name, website)
 
-    campaign_target = await _get_campaign_target(company_page, campaigns_db)
+    campaign_target = await _get_campaign_target(company, campaigns_db, companies_db)
     status = "Enriched"
 
     try:
         research_text = await _grounded_research(
-            name, website, campaign_target, gemini_client, config,
+            name, website or existing_url, campaign_target, gemini_client, config,
         )
         result = await _structure_research(
-            name, website, campaign_target, research_text, gemini_client, config,
+            name, website or existing_url, campaign_target,
+            research_text, gemini_client, config,
         )
     except Exception as exc:
         logger.warning(
@@ -158,40 +153,35 @@ async def _enrich_company(
             )
             await companies_db.update_company(
                 page_id,
-                {
-                    "Status": select_prop("Partially Enriched"),
-                    "Last Enriched": date_prop(),
-                },
+                {"status": "Partially Enriched",
+                 "last_enriched_at": datetime.now(timezone.utc)},
             )
             return
 
     try:
-        properties = build_properties_update(result, status)
+        properties = build_properties_update_pg(result, status)
         await companies_db.update_company(page_id, properties)
 
-        blocks = build_enrichment_blocks(result)
-        await notion_client.append_page_body(page_id, blocks)
+        body_text = build_enrichment_text(result)
+        await companies_db.append_body(page_id, body_text)
 
         score = result.get("dpp_fit_score", "N/A")
         logger.info("Enriched '%s': score=%s status=%s", name, score, status)
     except Exception as exc:
-        logger.error("Failed to update Notion for '%s': %s", name, exc)
+        logger.error("Failed to update company '%s': %s", name, exc)
 
 
 async def enrichment_worker(
     config,
     gemini_client,
-    notion_client,
-    companies_db,
-    campaigns_db,
+    companies_db: CompaniesDB,
+    campaigns_db: CampaignsDB,
     scraper,
     search_client=None,
 ) -> None:
     """
     Continuous worker loop: picks up Discovered and stale companies,
     enriches them per-company with concurrency semaphore.
-
-    Runs indefinitely, sleeping CYCLE_SLEEP_SECONDS between cycles.
     """
     logger.info("Enrichment worker started")
     sem = asyncio.Semaphore(_CONCURRENCY)
@@ -199,7 +189,7 @@ async def enrichment_worker(
     async def _bounded(company: dict) -> None:
         async with sem:
             await _enrich_company(
-                company, config, gemini_client, notion_client,
+                company, config, gemini_client,
                 companies_db, campaigns_db, scraper, search_client,
             )
 
@@ -211,11 +201,11 @@ async def enrichment_worker(
             )
             companies.extend(stale)
 
-            # Deduplicate by page ID
+            # Deduplicate by ID
             seen_ids: set[str] = set()
             unique: list[dict] = []
             for c in companies:
-                pid = c["id"]
+                pid = str(c["id"])
                 if pid not in seen_ids:
                     seen_ids.add(pid)
                     unique.append(c)

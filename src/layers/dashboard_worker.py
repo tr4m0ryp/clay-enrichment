@@ -1,98 +1,112 @@
 """
-Dashboard stats refresh worker.
+Dashboard stats logging worker.
 
-Continuous async loop that reads the dashboard block IDs from the
-persisted .dashboard_blocks.json file, computes per-campaign statistics
-by querying all four Notion databases, and writes the results into
-the stats table on the dashboard page every 5 minutes.
+Periodic async loop that computes per-campaign statistics via SQL
+count queries and logs them. The Notion dashboard block update logic
+has been removed -- the Next.js frontend replaces it.
 """
 
 import asyncio
-import json
 import logging
-from pathlib import Path
 
-from src.notion.databases_campaigns import CampaignsDB
-from src.notion.databases_companies import CompaniesDB
-from src.notion.databases_contact_campaigns import ContactCampaignsDB
-from src.notion.databases_contacts import ContactsDB
-from src.notion.databases_emails import EmailsDB
-from src.notion.client import NotionClient
-from src.notion.dashboard_stats import compute_stats, update_stats_table
+import asyncpg
+
+from src.db.campaigns import CampaignsDB
 
 logger = logging.getLogger(__name__)
 
 REFRESH_INTERVAL = 300  # 5 minutes
 
-_BLOCKS_FILE = Path(__file__).resolve().parents[2] / ".dashboard_blocks.json"
 
+async def _compute_stats(
+    pool: asyncpg.Pool, campaigns: list[dict]
+) -> list[dict]:
+    """Compute per-campaign statistics via SQL count queries.
 
-def _load_stats_table_id() -> str | None:
-    """Read the stats_table_id from .dashboard_blocks.json.
+    Args:
+        pool: asyncpg connection pool.
+        campaigns: List of campaign dicts.
 
     Returns:
-        The stats table block ID, or None if the file is missing or invalid.
+        List of stat dicts, one per campaign.
     """
-    if not _BLOCKS_FILE.exists():
-        logger.warning(
-            "Dashboard blocks file not found at %s; "
-            "stats refresh will be skipped this cycle",
-            _BLOCKS_FILE,
-        )
-        return None
+    stats = []
+    for campaign in campaigns:
+        cid = campaign["id"]
+        cname = campaign.get("name", "")
 
-    try:
-        data = json.loads(_BLOCKS_FILE.read_text())
-        table_id = data.get("stats_table_id", "")
-        if not table_id:
-            logger.warning(
-                "stats_table_id is empty in %s; "
-                "dashboard may need to be rebuilt",
-                _BLOCKS_FILE,
-            )
-            return None
-        return table_id
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning(
-            "Failed to read dashboard blocks file: %s", exc
+        companies = await pool.fetchval(
+            "SELECT COUNT(*) FROM company_campaigns WHERE campaign_id = $1",
+            cid,
         )
-        return None
+        contacts = await pool.fetchval(
+            "SELECT COUNT(*) FROM contact_campaign_links WHERE campaign_id = $1",
+            cid,
+        )
+        high_priority = await pool.fetchval(
+            "SELECT COUNT(*) FROM contact_campaigns "
+            "WHERE campaign_id = $1 AND relevance_score >= 7 "
+            "AND company_fit_score >= 7",
+            cid,
+        )
+        emails_pending = await pool.fetchval(
+            "SELECT COUNT(*) FROM emails "
+            "WHERE campaign_id = $1 AND status = 'Pending Review'",
+            cid,
+        )
+        emails_sent = await pool.fetchval(
+            "SELECT COUNT(*) FROM emails "
+            "WHERE campaign_id = $1 AND status = 'Sent'",
+            cid,
+        )
+
+        stats.append({
+            "campaign_name": cname,
+            "campaign_id": str(cid),
+            "companies": companies,
+            "contacts": contacts,
+            "high_priority": high_priority,
+            "emails_pending": emails_pending,
+            "emails_sent": emails_sent,
+        })
+
+    return stats
 
 
 async def dashboard_stats_worker(
-    notion_client: NotionClient,
+    pool: asyncpg.Pool,
     campaigns_db: CampaignsDB,
-    companies_db: CompaniesDB,
-    contacts_db: ContactsDB,
-    emails_db: EmailsDB,
-    contact_campaigns_db: ContactCampaignsDB | None = None,
 ) -> None:
-    """Continuous loop that refreshes dashboard stats every 5 minutes.
+    """Continuous loop that logs dashboard stats every 5 minutes.
+
+    Stats are computed via SQL queries. The Next.js frontend handles
+    the actual dashboard UI -- this worker only logs for observability.
 
     Args:
-        notion_client: NotionClient instance for API calls.
-        campaigns_db: CampaignsDB instance.
-        companies_db: CompaniesDB instance.
-        contacts_db: ContactsDB instance.
-        emails_db: EmailsDB instance.
-        contact_campaigns_db: ContactCampaignsDB for high-priority lead counts.
+        pool: asyncpg connection pool for raw count queries.
+        campaigns_db: CampaignsDB instance for fetching campaign list.
     """
     while True:
         try:
-            stats_table_id = _load_stats_table_id()
-            if stats_table_id is None:
-                logger.warning(
-                    "No stats table ID available, skipping refresh cycle"
-                )
+            campaigns = await campaigns_db.get_all()
+            if not campaigns:
+                logger.debug("No campaigns found for stats")
                 await asyncio.sleep(REFRESH_INTERVAL)
                 continue
 
-            stats = await compute_stats(
-                campaigns_db, companies_db, contacts_db, emails_db,
-                contact_campaigns_db,
-            )
+            stats = await _compute_stats(pool, campaigns)
 
-            await update_stats_table(notion_client, stats, stats_table_id)
+            for s in stats:
+                logger.info(
+                    "Stats [%s]: companies=%d contacts=%d "
+                    "high_priority=%d emails_pending=%d emails_sent=%d",
+                    s["campaign_name"],
+                    s["companies"],
+                    s["contacts"],
+                    s["high_priority"],
+                    s["emails_pending"],
+                    s["emails_sent"],
+                )
 
             logger.info(
                 "Dashboard stats refreshed: %d campaigns", len(stats)

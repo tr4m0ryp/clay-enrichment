@@ -9,7 +9,9 @@ All SMTP calls are mocked.
 import asyncio
 import smtplib
 from datetime import date, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -51,94 +53,59 @@ def _make_config(**overrides) -> Config:
     return Config(**defaults)
 
 
-def _make_email_page(
+_TEST_CONTACT_UUID = UUID("00000000-0000-0000-0000-000000000001")
+_TEST_CAMPAIGN_UUID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+def _make_email_row(
     page_id: str,
     subject: str,
-    contact_id: str = "contact-1",
-    campaign_id: str = "campaign-1",
+    contact_id: UUID = _TEST_CONTACT_UUID,
+    campaign_id: UUID = _TEST_CAMPAIGN_UUID,
 ) -> dict:
-    """Build a minimal Notion email page dict for testing."""
+    """Build a minimal flat email row dict (Postgres row)."""
     return {
         "id": page_id,
-        "properties": {
-            "Subject": {"title": [{"plain_text": subject}]},
-            "Contact": {"relation": [{"id": contact_id}]},
-            "Campaign": {"relation": [{"id": campaign_id}]},
-            "Status": {"select": {"name": "Approved"}},
-        },
+        "subject": subject,
+        "contact_id": contact_id,
+        "campaign_id": campaign_id,
+        "status": "Approved",
+        "body": "Hello, this is a test.",
     }
 
 
-def _make_notion_clients(
+def _make_db_clients(
     approved: list[dict] | None = None,
     recipient_email: str = "recipient@example.com",
-    body_blocks: list[dict] | None = None,
     campaign_status: str = "Active",
-) -> MagicMock:
-    """Build a mock notion_clients object with emails, contacts, campaigns."""
-    mock = MagicMock()
-
+) -> SimpleNamespace:
+    """Build a mock db_clients namespace with emails, contacts, campaigns."""
     # emails DB
     emails_db = MagicMock()
     emails_db.get_approved_emails = AsyncMock(
         return_value=approved or []
     )
-    emails_db._client = MagicMock()
-    emails_db._client.update_page = AsyncMock(return_value={"id": "x"})
-    emails_db._client.get_page_body = AsyncMock(
-        return_value=body_blocks or [
-            {
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"plain_text": "Hello, this is a test."}]
-                },
-            }
-        ]
+    emails_db.update_status = AsyncMock(return_value={"id": "x"})
+    # Mock the pool for campaign status lookup
+    pool_mock = MagicMock()
+    pool_mock.fetchrow = AsyncMock(
+        return_value={"status": campaign_status}
     )
-    mock.emails = emails_db
+    emails_db._pool = pool_mock
 
-    # contacts DB -- _client is used to retrieve contact page
+    # contacts DB
     contacts_db = MagicMock()
-    contacts_db._client = MagicMock()
-    contacts_db._client._sdk = MagicMock()
-    contacts_db._client._sdk.pages = MagicMock()
-    contacts_db._client._sdk.pages.retrieve = MagicMock(
-        return_value={
-            "id": "contact-1",
-            "properties": {
-                "Email": {"email": recipient_email},
-            },
-        }
+    contacts_pool = MagicMock()
+    contacts_pool.fetchrow = AsyncMock(
+        return_value={"email": recipient_email} if recipient_email else None
     )
-    contacts_db._client._call = AsyncMock(
-        return_value={
-            "id": "contact-1",
-            "properties": {
-                "Email": {"email": recipient_email},
-            },
-        }
+    contacts_db._pool = contacts_pool
+
+    return SimpleNamespace(
+        emails=emails_db,
+        contacts=contacts_db,
+        contact_campaigns=None,
     )
-    mock.contacts = contacts_db
-
-    # campaigns DB -- returns a campaign with the given status
-    campaigns_db = MagicMock()
-    campaigns_db._client = MagicMock()
-    campaigns_db._client._sdk = MagicMock()
-    campaigns_db._client._sdk.pages = MagicMock()
-    campaigns_db._client._call = AsyncMock(
-        return_value={
-            "id": "campaign-1",
-            "properties": {
-                "Status": {"select": {"name": campaign_status}},
-            },
-        }
-    )
-    mock.campaigns = campaigns_db
-
-    # contact_campaigns junction -- not used by most tests; disable via None
-    mock.contact_campaigns = None
-
-    return mock
 
 
 # -- SenderPool tests --
@@ -152,12 +119,10 @@ class TestSenderPool:
         senders = _make_senders(3)
         pool = SenderPool(senders, daily_limit=10)
 
-        # Record some sends to make counts unequal
         pool.record_send("sender1@test.com")
         pool.record_send("sender1@test.com")
         pool.record_send("sender2@test.com")
 
-        # sender3 has 0 sends, should be picked
         result = pool.next_sender()
         assert result is not None
         assert result.email == "sender3@test.com"
@@ -213,7 +178,6 @@ class TestSenderPool:
 
         assert pool.next_sender() is None
 
-        # Simulate date change by backdating the last_reset_date
         for state in pool._states:
             state.last_reset_date = date(2020, 1, 1)
 
@@ -246,8 +210,7 @@ class TestDelays:
         min_d, max_d = 100, 200
         for _ in range(100):
             delay = _compute_delay(min_d, max_d)
-            # Absolute bounds: min_d * 0.8 to max_d * 1.2
-            assert delay >= min_d * 0.8 - 1  # small tolerance
+            assert delay >= min_d * 0.8 - 1
             assert delay <= max_d * 1.2 + 1
 
     def test_delay_non_negative(self):
@@ -259,7 +222,6 @@ class TestDelays:
     def test_delay_varies(self):
         """Multiple calls should produce varying results."""
         delays = {_compute_delay(100, 200) for _ in range(20)}
-        # With 20 random draws, extremely unlikely to get all identical
         assert len(delays) > 1
 
 
@@ -271,34 +233,34 @@ class TestBusinessHours:
 
     def test_within_business_hours(self):
         """Should return True during business hours on a weekday."""
-        fake_now = datetime(2026, 4, 8, 10, 30)  # Wednesday 10:30
+        fake_now = datetime(2026, 4, 8, 10, 30)
         with patch("src.email.pool.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             assert is_business_hours() is True
 
     def test_before_business_hours(self):
         """Should return False before 8 AM."""
-        fake_now = datetime(2026, 4, 8, 7, 59)  # Wednesday 7:59
+        fake_now = datetime(2026, 4, 8, 7, 59)
         with patch("src.email.pool.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             assert is_business_hours() is False
 
     def test_after_business_hours(self):
         """Should return False at or after 6 PM."""
-        fake_now = datetime(2026, 4, 8, 18, 0)  # Wednesday 18:00
+        fake_now = datetime(2026, 4, 8, 18, 0)
         with patch("src.email.pool.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             assert is_business_hours() is False
 
     def test_weekend(self):
         """Should return False on weekends regardless of hour."""
-        fake_now = datetime(2026, 4, 11, 12, 0)  # Saturday noon
+        fake_now = datetime(2026, 4, 11, 12, 0)
         with patch("src.email.pool.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             assert is_business_hours() is False
 
 
-# -- Block-to-text tests --
+# -- Block-to-text tests (legacy helper, still in pool.py) --
 
 
 class TestBlocksToText:
@@ -353,53 +315,43 @@ class TestBlocksToText:
 
 @pytest.mark.asyncio
 async def test_send_batch_success():
-    """Successful send should update Notion status to Sent."""
-    pages = [_make_email_page("e1", "Test Subject")]
+    """Successful send should update email status to Sent."""
+    rows = [_make_email_row("e1", "Test Subject")]
     config = _make_config()
     pool = SenderPool(config.senders, config.email_daily_limit)
-    notion = _make_notion_clients(approved=pages)
+    dbs = _make_db_clients(approved=rows)
 
     with patch("src.email.sender._send_smtp") as mock_smtp:
-        await send_batch(pages, pool, config, notion)
+        await send_batch(rows, pool, config, dbs)
         mock_smtp.assert_called_once()
 
-    # Verify Notion was updated with Sent status
-    notion.emails._client.update_page.assert_awaited()
-    update_call = notion.emails._client.update_page.call_args
-    props = update_call[0][1]
-    assert props["Status"] == {"select": {"name": "Sent"}}
-    assert "Sender Address" in props
-    assert "Sent At" in props
+    dbs.emails.update_status.assert_awaited_once_with("e1", "Sent")
 
 
 @pytest.mark.asyncio
 async def test_send_batch_smtp_failure_marks_failed():
-    """SMTP failure should mark email as Failed in Notion."""
-    pages = [_make_email_page("e1", "Test Subject")]
+    """SMTP failure should mark email as Failed."""
+    rows = [_make_email_row("e1", "Test Subject")]
     config = _make_config()
     pool = SenderPool(config.senders, config.email_daily_limit)
-    notion = _make_notion_clients(approved=pages)
+    dbs = _make_db_clients(approved=rows)
 
     with patch(
         "src.email.sender._send_smtp",
         side_effect=smtplib.SMTPException("Connection refused"),
     ):
-        await send_batch(pages, pool, config, notion)
+        await send_batch(rows, pool, config, dbs)
 
-    update_call = notion.emails._client.update_page.call_args
-    props = update_call[0][1]
-    assert props["Status"] == {"select": {"name": "Failed"}}
+    dbs.emails.update_status.assert_awaited_with("e1", "Failed")
 
 
 @pytest.mark.asyncio
 async def test_send_batch_fail_threshold_stops():
     """Reaching 15% fail rate should stop further sending."""
-    # Create 10 pages. First send fails (1 fail / 1 total = 100% > 15%),
-    # so the loop should stop before attempting the second email.
-    pages = [_make_email_page(f"e{i}", f"Subject {i}") for i in range(10)]
+    rows = [_make_email_row(f"e{i}", f"Subject {i}") for i in range(10)]
     config = _make_config()
     pool = SenderPool(config.senders, config.email_daily_limit)
-    notion = _make_notion_clients(approved=pages)
+    dbs = _make_db_clients(approved=rows)
 
     call_count = {"n": 0}
 
@@ -408,19 +360,18 @@ async def test_send_batch_fail_threshold_stops():
         raise smtplib.SMTPException("fail")
 
     with patch("src.email.sender._send_smtp", side_effect=always_fail):
-        await send_batch(pages, pool, config, notion)
+        await send_batch(rows, pool, config, dbs)
 
-    # First send fails -> 100% fail rate -> stops before second attempt
     assert call_count["n"] == 1
 
 
 @pytest.mark.asyncio
 async def test_send_batch_exhausted_senders_stops():
     """Should stop when all senders hit daily limit."""
-    pages = [_make_email_page(f"e{i}", f"Subject {i}") for i in range(5)]
+    rows = [_make_email_row(f"e{i}", f"Subject {i}") for i in range(5)]
     config = _make_config(email_daily_limit=1)
     pool = SenderPool(config.senders, config.email_daily_limit)
-    notion = _make_notion_clients(approved=pages)
+    dbs = _make_db_clients(approved=rows)
 
     call_count = {"n": 0}
 
@@ -428,22 +379,21 @@ async def test_send_batch_exhausted_senders_stops():
         call_count["n"] += 1
 
     with patch("src.email.sender._send_smtp", side_effect=counting_smtp):
-        await send_batch(pages, pool, config, notion)
+        await send_batch(rows, pool, config, dbs)
 
-    # 2 senders with limit 1 each -> max 2 sends
     assert call_count["n"] == 2
 
 
 @pytest.mark.asyncio
 async def test_send_batch_no_recipient_skips():
     """Email with no recipient should be skipped, not crash."""
-    pages = [_make_email_page("e1", "Test Subject")]
+    rows = [_make_email_row("e1", "Test Subject")]
     config = _make_config()
     pool = SenderPool(config.senders, config.email_daily_limit)
-    notion = _make_notion_clients(approved=pages, recipient_email="")
+    dbs = _make_db_clients(approved=rows, recipient_email="")
 
     with patch("src.email.sender._send_smtp") as mock_smtp:
-        await send_batch(pages, pool, config, notion)
+        await send_batch(rows, pool, config, dbs)
         mock_smtp.assert_not_called()
 
 
@@ -454,11 +404,9 @@ async def test_send_batch_no_recipient_skips():
 async def test_worker_disabled_when_no_smtp():
     """Worker should sleep (not crash) when SMTP host is empty."""
     config = _make_config(smtp_host="")
-    notion = _make_notion_clients()
+    dbs = _make_db_clients()
 
     call_count = {"n": 0}
-
-    original_sleep = asyncio.sleep
 
     async def counting_sleep(duration):
         call_count["n"] += 1
@@ -467,9 +415,8 @@ async def test_worker_disabled_when_no_smtp():
 
     with patch("src.email.sender.asyncio.sleep", side_effect=counting_sleep):
         with pytest.raises(_StopLoop):
-            await email_sender_worker(config, notion)
+            await email_sender_worker(config, dbs)
 
-    # Should have slept for 3600 (the SMTP-disabled sleep)
     assert call_count["n"] >= 1
 
 
@@ -477,7 +424,7 @@ async def test_worker_disabled_when_no_smtp():
 async def test_worker_sleeps_outside_business_hours():
     """Worker should sleep outside business hours."""
     config = _make_config()
-    notion = _make_notion_clients()
+    dbs = _make_db_clients()
 
     call_count = {"n": 0}
 
@@ -491,7 +438,7 @@ async def test_worker_sleeps_outside_business_hours():
             "src.email.sender.asyncio.sleep", side_effect=counting_sleep
         ):
             with pytest.raises(_StopLoop):
-                await email_sender_worker(config, notion)
+                await email_sender_worker(config, dbs)
 
     assert call_count["n"] >= 1
 

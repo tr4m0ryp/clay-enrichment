@@ -106,7 +106,7 @@ def _load_config() -> Config:
 
     required = {
         "GEMINI_API_KEY": cfg.gemini_api_key,
-        "NOTION_API_KEY": cfg.notion_api_key,
+        "DATABASE_URL": cfg.database_url,
     }
     missing = [k for k, v in required.items() if not v]
     if missing:
