@@ -154,6 +154,76 @@ export async function getContactCampaignById(id: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Campaign-scoped queries
+// ---------------------------------------------------------------------------
+
+export async function getCompaniesByCampaign(campaignId: string) {
+  return sql`
+    SELECT c.*, cc.created_at AS linked_at
+    FROM companies c
+    JOIN company_campaigns cc ON c.id = cc.company_id
+    WHERE cc.campaign_id = ${campaignId}
+    ORDER BY c.updated_at DESC
+    LIMIT 200
+  `;
+}
+
+export async function getContactsByCampaign(campaignId: string) {
+  return sql`
+    SELECT ct.*, co.name AS company_name
+    FROM contacts ct
+    JOIN contact_campaign_links ccl ON ct.id = ccl.contact_id
+    LEFT JOIN companies co ON ct.company_id = co.id
+    WHERE ccl.campaign_id = ${campaignId}
+    ORDER BY ct.updated_at DESC
+    LIMIT 200
+  `;
+}
+
+export async function getEmailsByCampaignWithContacts(
+  campaignId: string,
+  status?: string,
+) {
+  if (status && status !== "all") {
+    return sql`
+      SELECT
+        e.id, e.subject, e.body, e.status, e.created_at, e.contact_id,
+        ct.name AS contact_name, ct.email AS contact_email,
+        co.name AS company_name
+      FROM emails e
+      LEFT JOIN contacts ct ON ct.id = e.contact_id
+      LEFT JOIN companies co ON co.id = ct.company_id
+      WHERE e.campaign_id = ${campaignId} AND e.status = ${status}
+      ORDER BY e.created_at DESC
+    `;
+  }
+  return sql`
+    SELECT
+      e.id, e.subject, e.body, e.status, e.created_at, e.contact_id,
+      ct.name AS contact_name, ct.email AS contact_email,
+      co.name AS company_name
+    FROM emails e
+    LEFT JOIN contacts ct ON ct.id = e.contact_id
+    LEFT JOIN companies co ON co.id = ct.company_id
+    WHERE e.campaign_id = ${campaignId}
+    ORDER BY e.created_at DESC
+  `;
+}
+
+export async function getLeadsByCampaign(campaignId: string) {
+  return sql`
+    SELECT
+      cc.id, cc.name, cc.job_title, cc.company_name, cc.email,
+      cc.linkedin_url, cc.company_fit_score, cc.relevance_score,
+      cc.outreach_status, cc.email_subject, cc.campaign_id
+    FROM contact_campaigns cc
+    WHERE cc.campaign_id = ${campaignId}
+      AND (cc.company_fit_score >= 7 OR cc.relevance_score >= 7)
+    ORDER BY cc.relevance_score DESC NULLS LAST, cc.company_fit_score DESC NULLS LAST
+  `;
+}
+
+// ---------------------------------------------------------------------------
 // Stats (dashboard)
 // ---------------------------------------------------------------------------
 
