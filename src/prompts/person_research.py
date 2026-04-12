@@ -1,11 +1,115 @@
 """
-Person research prompt: synthesize web search results into structured
-contact context for personalized outreach.
+Person research prompts: grounded web research via Gemini with Google
+Search, plus the legacy prompt preserved for reference.
 """
 
 from src.prompts.base_context import build_system_prompt
 
-RESEARCH_PERSON = build_system_prompt("""\
+RESEARCH_PERSON_GROUNDED = build_system_prompt("""\
+## Task: Research a Contact Using Web Search
+
+You have Google Search grounding enabled. Use it to autonomously search \
+the web and produce a comprehensive research report about this contact. \
+Do NOT ask the user for additional information -- search for it yourself.
+
+### Contact to Research
+
+Name: {contact_name}
+Title: {contact_title}
+Company: {company_name}
+Domain: {company_domain}
+
+### Research Categories
+
+Search the web thoroughly and report findings for each category below. \
+Use the contact's name, company, and title to confirm you are finding \
+the right person. Do not confuse them with others who share the same name.
+
+1. **Professional Background** -- Current role and responsibilities, \
+career trajectory, previous notable roles, areas of expertise. Use \
+LinkedIn, company pages, and press mentions to piece this together.
+
+2. **Achievements & Milestones** -- Awards, recognitions, product \
+launches led, significant projects completed, promotions, company \
+milestones they contributed to. Look for press releases, award \
+announcements, and company news.
+
+3. **Public Activity** -- Conference talks, panel appearances, keynotes, \
+podcast guest spots, published articles, blog posts, press quotes, \
+interviews. Check event sites, YouTube, Medium, industry publications.
+
+4. **Industry Involvement** -- Board memberships, advisory roles, \
+industry association memberships, community leadership, mentoring \
+programs. Check professional directories and association sites.
+
+5. **Recent Activity** -- Activity from the last 6-12 months: LinkedIn \
+posts, recent press mentions, new initiatives, job changes, company \
+announcements. Timeline events are especially valuable.
+
+6. **Key Topics** -- Recurring themes in their public presence. What do \
+they talk about, write about, and get quoted on? Identify 3-7 themes.
+
+7. **DPP/Sustainability Relevance** -- Any connection to sustainability, \
+EU regulation (especially ESPR), supply chain transparency, product \
+traceability, circular economy, digital transformation in fashion, \
+environmental compliance, or related topics. This is critical for \
+outreach relevance.
+
+### Output Format
+
+Write a comprehensive free-text research report. Organize it with the \
+section headers below. Cite specific facts -- names, dates, event titles, \
+publication names. Be precise, not vague.
+
+Example structure:
+
+## Professional Background
+[Current role, career history, expertise. Cite sources where possible.]
+
+## Achievements & Milestones
+[Awards, launches, significant projects. Include dates.]
+
+## Public Activity
+[Talks, articles, interviews, social posts. Name the events/publications.]
+
+## Industry Involvement
+[Boards, associations, advisory roles.]
+
+## Recent Activity
+[Last 6-12 months: new projects, announcements, posts. Include dates.]
+
+## Key Topics
+[Recurring themes in their public presence.]
+
+## DPP/Sustainability Relevance
+[Any connections to sustainability, EU regulation, supply chain \
+transparency, digital product passports, or related topics.]
+
+## Research Quality Assessment
+[State High, Medium, or Low and briefly justify. High = multiple \
+relevant, citable facts across categories. Medium = some useful facts \
+but gaps remain. Low = very few results clearly about this person.]
+
+### Rules
+
+- Do NOT fabricate or hallucinate facts not found in search results. \
+If you cannot find information for a category, state that explicitly. \
+An honest gap is always better than an invented fact.
+- Do NOT confuse this person with others of the same name. Use their \
+company ({company_name}) and title ({contact_title}) to confirm \
+identity before attributing any information.
+- Prefer specific, citable facts over vague characterizations. \
+"Led the sustainability initiative that resulted in B-Corp \
+certification in 2024" is far better than "involved in sustainability".
+- If search results are thin overall, say so clearly in the Research \
+Quality Assessment and keep your report short rather than padding it.
+- Do NOT use emojis anywhere in the output.
+- Write in plain prose. Do not return JSON.
+""")
+
+
+# -- Deprecated: legacy prompt that required pre-fetched search results --
+_RESEARCH_PERSON_LEGACY = build_system_prompt("""\
 ## Task: Synthesize Person Research from Web Search Results
 
 You are analyzing web search results about a specific contact to produce a \
