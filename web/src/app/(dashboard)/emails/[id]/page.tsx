@@ -4,6 +4,7 @@ import { sql } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { EmailActions } from "../email-actions";
+import { EmailEditor } from "./email-editor";
 
 type EmailStatus = "Pending Review" | "Approved" | "Sent" | "Rejected";
 
@@ -78,7 +79,7 @@ export default async function EmailDetailPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">
-            {email.subject}
+            {email.contact_name ?? "Unknown Contact"}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{date}</p>
         </div>
@@ -133,16 +134,11 @@ export default async function EmailDetailPage({
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Email Body</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-line">
-            {email.body}
-          </p>
-        </CardContent>
-      </Card>
+      <EmailEditor
+        emailId={email.id}
+        initialSubject={email.subject}
+        initialBody={email.body}
+      />
 
       {email.status === "Pending Review" && (
         <EmailActions emailId={email.id} />
