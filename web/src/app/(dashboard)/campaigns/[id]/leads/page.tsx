@@ -1,13 +1,13 @@
 import { getLeadsByCampaign } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 import { OutreachSelect } from "@/app/(dashboard)/leads/outreach-select";
 
 interface LeadRow {
@@ -23,7 +23,7 @@ interface LeadRow {
   email_subject: string | null;
 }
 
-function scoreColor(score: number | null): "success" | "warning" | "default" {
+function scoreVariant(score: number | null): "success" | "warning" | "default" {
   if (score == null) return "default";
   if (score >= 8) return "success";
   if (score >= 7) return "warning";
@@ -47,26 +47,26 @@ export default async function CampaignLeadsPage({
         Contacts with a Fit or Relevance score of 7+.
       </p>
 
-      {leads.length === 0 ? (
-        <p className="mt-8 text-center text-sm text-muted-foreground">
-          No high-priority leads found for this campaign.
-        </p>
-      ) : (
-        <div className="mt-6 overflow-x-auto rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Company</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Job Title</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>LinkedIn</TableHead>
-                <TableHead>Fit</TableHead>
-                <TableHead>Relevance</TableHead>
-                <TableHead>Outreach Status</TableHead>
-                <TableHead>Email Subject</TableHead>
-              </TableRow>
-            </TableHeader>
+      <div className="mt-6">
+        <DataTable
+          count={leads.length}
+          empty="No high-priority leads found for this campaign."
+          colSpan={9}
+        >
+          <TableHeader>
+            <TableRow>
+              <TableHead>Company</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Job Title</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>LinkedIn</TableHead>
+              <TableHead className="text-right">Fit</TableHead>
+              <TableHead className="text-right">Relevance</TableHead>
+              <TableHead>Outreach</TableHead>
+              <TableHead>Email Subject</TableHead>
+            </TableRow>
+          </TableHeader>
+          {leads.length > 0 && (
             <TableBody>
               {leads.map((lead) => (
                 <TableRow key={lead.id}>
@@ -77,16 +77,16 @@ export default async function CampaignLeadsPage({
                   <TableCell className="text-muted-foreground">
                     {lead.job_title ?? "--"}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="font-mono text-xs">
                     {lead.email ? (
                       <a
                         href={`mailto:${lead.email}`}
-                        className="text-sm underline underline-offset-2"
+                        className="text-primary hover:underline underline-offset-4"
                       >
                         {lead.email}
                       </a>
                     ) : (
-                      "--"
+                      <span className="text-muted-foreground">--</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -95,21 +95,21 @@ export default async function CampaignLeadsPage({
                         href={lead.linkedin_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-sm underline underline-offset-2"
+                        className="text-primary hover:underline underline-offset-4"
                       >
                         Profile
                       </a>
                     ) : (
-                      "--"
+                      <span className="text-muted-foreground">--</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={scoreColor(lead.company_fit_score)}>
+                  <TableCell className="text-right">
+                    <Badge variant={scoreVariant(lead.company_fit_score)} dot={false}>
                       {lead.company_fit_score ?? "--"}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={scoreColor(lead.relevance_score)}>
+                  <TableCell className="text-right">
+                    <Badge variant={scoreVariant(lead.relevance_score)} dot={false}>
                       {lead.relevance_score ?? "--"}
                     </Badge>
                   </TableCell>
@@ -119,15 +119,15 @@ export default async function CampaignLeadsPage({
                       current={lead.outreach_status}
                     />
                   </TableCell>
-                  <TableCell className="max-w-[200px] truncate text-xs text-muted-foreground">
+                  <TableCell className="text-muted-foreground text-xs">
                     {lead.email_subject ?? "--"}
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
-        </div>
-      )}
+          )}
+        </DataTable>
+      </div>
     </div>
   );
 }
