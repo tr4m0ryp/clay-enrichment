@@ -1,10 +1,25 @@
 """
-Layer 2 prompts: single-pass company enrichment with DPP-specific scoring.
+Layer 2 prompts: company enrichment with DPP-specific scoring.
+
+Two-step enrichment pipeline:
+  Step 1 -- RESEARCH_COMPANY_GROUNDED: grounded web research (free text)
+  Step 2 -- STRUCTURE_COMPANY_ENRICHMENT: JSON structuring from research
+
+Legacy single-pass prompt retained as _ENRICH_COMPANY_LEGACY.
 """
 
 from src.prompts.base_context import build_system_prompt
 
-ENRICH_COMPANY = build_system_prompt("""\
+# Re-export new two-step prompts from split files
+from src.prompts.enrichment_research import RESEARCH_COMPANY_GROUNDED  # noqa: F401
+from src.prompts.enrichment_structure import STRUCTURE_COMPANY_ENRICHMENT  # noqa: F401
+
+# --- DEPRECATED ---
+# _ENRICH_COMPANY_LEGACY is the original single-pass enrichment prompt.
+# Retained for reference and rollback. Do not use in new code.
+# Replaced by the two-step pipeline: RESEARCH_COMPANY_GROUNDED then
+# STRUCTURE_COMPANY_ENRICHMENT.
+_ENRICH_COMPANY_LEGACY = build_system_prompt("""\
 ## Task: Enrich Companies for DPP Outreach
 
 You are analyzing scraped website content to produce structured company profiles \
@@ -112,3 +127,6 @@ sustainability focus.
 and false for booleans. Set dpp_fit_score to 3 with reasoning explaining the \
 data gap.
 """)
+
+# Backward compatibility: existing code imports ENRICH_COMPANY
+ENRICH_COMPANY = _ENRICH_COMPANY_LEGACY
