@@ -1,16 +1,18 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useCallback, type ReactNode } from "react";
 
-const SidebarCtx = createContext<{
-  collapsed: boolean;
-  toggle: () => void;
-}>({ collapsed: false, toggle: () => {} });
+const SidebarCtx = createContext<{ toggle: () => void }>({
+  toggle: () => {},
+});
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const toggle = useCallback(() => {
+    document.documentElement.classList.toggle("sidebar-collapsed");
+  }, []);
+
   return (
-    <SidebarCtx.Provider value={{ collapsed, toggle: () => setCollapsed((c) => !c) }}>
+    <SidebarCtx.Provider value={{ toggle }}>
       {children}
     </SidebarCtx.Provider>
   );
