@@ -8,6 +8,7 @@ import {
   Mail,
   Star,
   ArrowLeft,
+  Settings,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -87,6 +88,14 @@ export function Sidebar() {
             <NavLink key={item.href} {...item} />
           ))}
         </nav>
+
+        <div className="border-t border-border px-3 py-3">
+          <NavLink
+            href="/settings"
+            icon={<Settings className="h-4 w-4" />}
+            label="Settings"
+          />
+        </div>
       </aside>
     );
   }
@@ -108,6 +117,14 @@ export function Sidebar() {
           <NavLink key={item.href} {...item} />
         ))}
       </nav>
+
+      <div className="border-t border-border px-3 py-3">
+        <NavLink
+          href="/settings"
+          icon={<Settings className="h-4 w-4" />}
+          label="Settings"
+        />
+      </div>
     </aside>
   );
 }
