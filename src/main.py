@@ -32,12 +32,12 @@ from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier
 from src.layers.discovery import (
     discovery_worker,
-    NotionClients as DiscoveryNotionClients,
+    DBClients as DiscoveryDBClients,
 )
 from src.layers.enrichment import enrichment_worker
 from src.layers.people import (
     people_worker,
-    NotionClients as PeopleNotionClients,
+    DBClients as PeopleDBClients,
 )
 from src.layers.person_research import person_research_worker
 from src.layers.campaign_scoring import campaign_scoring_worker
@@ -172,10 +172,10 @@ async def main() -> None:
     contact_campaigns_db = ContactCampaignsDB(pool)
 
     # Build per-worker DB client aggregates
-    discovery_dbs = DiscoveryNotionClients(
+    discovery_dbs = DiscoveryDBClients(
         campaigns=campaigns_db, companies=companies_db
     )
-    people_dbs = PeopleNotionClients(
+    people_dbs = PeopleDBClients(
         companies=companies_db, contacts=contacts_db
     )
     sender_dbs = SimpleNamespace(
