@@ -43,7 +43,6 @@ from src.layers.email_gen import email_gen_worker
 from src.email.sender import email_sender_worker
 from src.notion.dashboard import setup_dashboard
 from src.layers.dashboard_worker import dashboard_stats_worker
-from src.notion.databases_contact_campaigns import ContactCampaignsDB
 from src.notion.leads_pages import refresh_leads_pages
 
 logger: logging.Logger | None = None
