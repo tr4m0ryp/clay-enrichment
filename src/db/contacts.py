@@ -57,6 +57,14 @@ class ContactsDB:
         )
         return [dict(r) for r in rows]
 
+    async def get_contacts_by_status(self, status: str) -> list[dict]:
+        """Fetch all contacts with a given status."""
+        rows = await self._pool.fetch(
+            "SELECT * FROM contacts WHERE status = $1 ORDER BY created_at",
+            status,
+        )
+        return [dict(r) for r in rows]
+
     # -- Create ----------------------------------------------------------------
 
     async def create_contact(
