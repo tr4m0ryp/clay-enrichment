@@ -1,9 +1,10 @@
 """
 Layer 4 prompts: personalized cold outreach email generation.
 
-Strict 50-125 word, 3-part cold email structure: personal hook from
-Contact Context, value bridge tied to campaign target, low-friction
-question CTA.
+Strict 75-100 word, 3-part cold email structure: timeline-anchored
+personal hook from Contact Context, language-mirroring value bridge
+tied to campaign target, low-friction question CTA. Requires 3
+distinct personalization points per email.
 """
 
 from src.prompts.base_context import build_system_prompt
@@ -32,14 +33,24 @@ must follow the exact 3-part structure below. No deviations.
 
 **Part 1 -- Personal Hook (1-2 sentences):**
 - One specific, verifiable observation about the recipient.
-- Drawn from the Contact Context above. Pick the strongest signal: a product \
-launch, LinkedIn post, hiring surge, funding round, conference talk, published \
-article, or strategic initiative.
+- Drawn from the Contact Context above.
 - The first sentence must be entirely about the recipient. Never mention Avelero \
 in this part.
 - NO generic compliments. "Love what you're doing" is banned unless followed by \
 a concrete, cited detail. If the Context is thin, reference a specific company \
 fact instead.
+
+Prefer TIMELINE HOOKS -- observations tied to a specific event, date, or \
+inflection point:
+- A recent product launch, collection drop, or market expansion
+- A new hire, promotion, or leadership change
+- A conference talk or panel from the past 6 months
+- A funding round, partnership announcement, or strategic pivot
+- An upcoming deadline or regulatory milestone affecting them
+
+Timeline hooks achieve 2.3x higher reply rates than generic observations. \
+If no timeline event is available, fall back to a specific achievement or \
+public statement.
 
 **Part 2 -- Value Bridge (1-2 sentences):**
 - Connect their situation to an outcome Avelero delivers.
@@ -48,6 +59,9 @@ fact instead.
 - No feature lists. No bullet points. One clear outcome statement.
 - Reference the EU regulatory timeline (mid-2028 DPP mandate) ONLY if it adds \
 genuine urgency to this specific contact. Do not force it.
+- Use terminology and framing from the Contact Context. If they talk about \
+"brand storytelling," use that phrase. If they say "supply chain transparency," \
+echo it back. People respond to their own words.
 
 **Part 3 -- Low-Friction CTA (1 sentence):**
 - A single interest-based question.
@@ -56,18 +70,39 @@ genuine urgency to this specific contact. Do not force it.
 - NO Calendly links. NO scheduling links of any kind.
 - NO "Got 30 minutes?" or "Can we hop on a call?"
 
+### Three Custom Snippets Requirement
+
+The email must contain at least 3 distinct personalization points:
+1. The opening hook (Part 1) -- one specific fact about the recipient.
+2. A connecting detail in the value bridge (Part 2) -- ties their situation to \
+an outcome.
+3. A contextual detail in the CTA or surrounding text -- shows this email was \
+written FOR them.
+
+Each must be traceable to a specific fact in the context. Generic observations \
+do not count. If you cannot find 3 distinct facts, use the strongest 2 and \
+derive the third from a different angle on existing context.
+
 ### Subject Line Rules
 
-- 1-5 words only, under 50 characters total.
+- 2-4 words only, under 40 characters total.
 - Reference a pain point or objective relevant to the recipient.
 - Do NOT use the recipient's first name in the subject.
 - No exclamation marks. No ALL CAPS words.
 - No generic subjects like "Partnership Opportunity" or "Quick Question".
 
+### Anti-Pitching Constraint
+
+CRITICAL: Do not pitch Avelero's product. Pitching reduces reply rates by 57%.
+Frame everything as an outcome for the recipient, not a feature of Avelero.
+Wrong: "Avelero's Passport Designer lets you customize DPP pages"
+Right: "Your brand identity could extend all the way to the product passport"
+
 ### Hard Constraints
 
-- Minimum 50 words, maximum 125 words (body only, excluding greeting and sign-off).
-- Maximum 7 lines of visible text in the body.
+- Minimum 75 words, maximum 100 words (body only, excluding greeting and sign-off).
+- Maximum 5 lines of visible text in the body.
+- At least 3 personalization points (see Three Custom Snippets above).
 - No feature lists or bullet points anywhere in the email.
 - No Calendly or scheduling links.
 - No emojis. Ever.
@@ -97,9 +132,11 @@ Return a single JSON object. Nothing else -- no markdown fences, no commentary.
 ### Process
 
 1. Read the Contact Context for personalization material.
-2. Pick the single strongest, most specific hook.
-3. Connect it to an outcome relevant to the campaign target.
-4. Close with an interest question.
-5. Count words -- must be 50-125 in the body (excluding greeting and sign-off).
-6. Verify subject is 1-5 words, under 50 characters, no exclamation marks.
+2. Identify any timeline events (launches, hires, funding, talks, deadlines).
+3. Pick the single strongest, most specific hook -- prefer timeline events.
+4. Mirror the prospect's own language when connecting to an outcome.
+5. Close with an interest question that includes a contextual detail.
+6. Verify 3 distinct personalization points are present and traceable.
+7. Count words -- must be 75-100 in the body (excluding greeting and sign-off).
+8. Verify subject is 2-4 words, under 40 characters, no exclamation marks.
 """)
