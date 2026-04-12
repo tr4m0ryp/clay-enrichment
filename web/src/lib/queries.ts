@@ -5,7 +5,24 @@ import { sql } from "./db";
 // ---------------------------------------------------------------------------
 
 export async function getCampaigns() {
-  return sql`SELECT * FROM campaigns ORDER BY created_at DESC`;
+  return sql`
+    SELECT
+      c.*,
+      coalesce(cc_co.cnt, 0)::int AS company_count,
+      coalesce(cc_ct.cnt, 0)::int AS contact_count
+    FROM campaigns c
+    LEFT JOIN (
+      SELECT campaign_id, count(*) AS cnt
+      FROM company_campaigns
+      GROUP BY campaign_id
+    ) cc_co ON cc_co.campaign_id = c.id
+    LEFT JOIN (
+      SELECT campaign_id, count(*) AS cnt
+      FROM contact_campaign_links
+      GROUP BY campaign_id
+    ) cc_ct ON cc_ct.campaign_id = c.id
+    ORDER BY c.created_at DESC
+  `;
 }
 
 export async function getCampaignById(id: string) {

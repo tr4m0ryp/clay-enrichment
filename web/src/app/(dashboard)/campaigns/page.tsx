@@ -9,6 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { CreateCampaignForm } from "./create-campaign-form";
 
 function statusBadgeVariant(status: string) {
   switch (status) {
@@ -50,6 +51,7 @@ export default async function CampaignsPage() {
             All outreach campaigns.
           </p>
         </div>
+        <CreateCampaignForm />
       </div>
 
       <div className="mt-6 rounded-lg border border-border">
@@ -96,8 +98,12 @@ export default async function CampaignsPage() {
                 <TableCell className="max-w-[280px] text-muted-foreground">
                   {truncate(c.target_description as string, 80)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums">--</TableCell>
-                <TableCell className="text-right tabular-nums">--</TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {(c.company_count as number) ?? 0}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {(c.contact_count as number) ?? 0}
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   {formatDate(c.created_at as string)}
                 </TableCell>
