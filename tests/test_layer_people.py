@@ -27,35 +27,20 @@ from src.layers.people_helpers import (
     split_name as _split_name,
     verify_email_waterfall as _verify_email_waterfall,
 )
-from src.notion.prop_helpers import (
-    title_prop,
-    url_prop,
-    select_prop,
-    relation_prop,
-)
-
-
-def _read_title_prop(text: str) -> dict:
-    """Build a Notion title property in API read format (with plain_text)."""
-    return {"title": [{"plain_text": text, "text": {"content": text}}]}
 
 
 def _make_company_page(
     page_id: str = "comp-001",
     name: str = "TestCo",
     website: str = "https://www.testco.com",
-    campaign_id: str = "camp-001",
     status: str = "Enriched",
 ) -> dict:
-    """Build a minimal Notion company page dict for testing."""
+    """Build a minimal flat company dict (Postgres row)."""
     return {
         "id": page_id,
-        "properties": {
-            "Name": _read_title_prop(name),
-            "Website": url_prop(website),
-            "Status": select_prop(status),
-            "Campaign": relation_prop([campaign_id]),
-        },
+        "name": name,
+        "website": website,
+        "status": status,
     }
 
 
@@ -63,12 +48,10 @@ def _make_contact_page(
     page_id: str = "cont-001",
     name: str = "Jane Smith",
 ) -> dict:
-    """Build a minimal Notion contact page dict for testing."""
+    """Build a minimal flat contact dict (Postgres row)."""
     return {
         "id": page_id,
-        "properties": {
-            "Name": _read_title_prop(name),
-        },
+        "name": name,
     }
 
 
@@ -302,6 +285,10 @@ class TestDiscoverContactsForCompany:
 
         companies_db = MagicMock()
         companies_db.update_company = AsyncMock(return_value={})
+        # Mock pool for campaign lookup in discover_contacts_for_company
+        pool_mock = MagicMock()
+        pool_mock.fetch = AsyncMock(return_value=[{"campaign_id": "camp-001"}])
+        companies_db._pool = pool_mock
 
         contacts_db = MagicMock()
         contacts_db.get_contacts_for_company = AsyncMock(return_value=[])
@@ -384,7 +371,7 @@ class TestDiscoverContactsForCompany:
         update_args = notion_clients.companies.update_company.call_args
         assert update_args.args[0] == "comp-001"
         props = update_args.args[1]
-        assert props["Status"]["select"]["name"] == "Contacts Found"
+        assert props["status"] == "Contacts Found"
 
     def test_skips_duplicate_contacts(self) -> None:
         """Contacts already in Notion for this company should be skipped."""
@@ -515,7 +502,7 @@ class TestDiscoverContactsForCompany:
         ) = self._build_deps()
 
         # Company with no website
-        company["properties"]["Website"] = url_prop("")
+        company["website"] = ""
 
         count = asyncio.run(
             discover_contacts_for_company(

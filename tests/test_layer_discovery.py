@@ -37,16 +37,12 @@ def _make_campaign(
     target: str = "EU fashion brands with sustainability focus",
     status: str = "Active",
 ) -> dict:
-    """Build a minimal Notion campaign page dict for testing."""
+    """Build a minimal flat campaign dict (Postgres row)."""
     return {
         "id": page_id,
-        "properties": {
-            "Name": {"title": [{"plain_text": name}]},
-            "Target Description": {
-                "rich_text": [{"plain_text": target}]
-            },
-            "Status": {"select": {"name": status}},
-        },
+        "name": name,
+        "target_description": target,
+        "status": status,
     }
 
 

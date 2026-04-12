@@ -2,7 +2,7 @@
 
 Picks up contacts with status "Enriched", researches each via a single
 Gemini call with Google Search grounding, and appends free-text research
-to the contact page body. Updates status to "Researched".
+to the contact body column. Updates status to "Researched".
 
 Structuring (Context, Job Title, scoring) is handled downstream by
 the campaign_scoring layer.
@@ -13,18 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from urllib.parse import urlparse
+from uuid import UUID
 
+from src.db.companies import CompaniesDB
+from src.db.contacts import ContactsDB
 from src.models.gemini import GeminiClient
-from src.notion.client import NotionClient
-from src.notion.databases_contacts import ContactsDB
-from src.notion.prop_helpers import (
-    extract_number,
-    extract_title,
-    extract_rich_text,
-    extract_url,
-    extract_relation_ids,
-    select_prop,
-)
 from src.prompts.person_research import RESEARCH_PERSON_GROUNDED
 
 logger = logging.getLogger(__name__)
@@ -48,53 +41,19 @@ def _extract_domain(website_url: str) -> str:
         return ""
 
 
-def _heading_block(text: str) -> dict:
-    """Build a Notion heading_3 block."""
-    return {
-        "object": "block",
-        "type": "heading_3",
-        "heading_3": {
-            "rich_text": [{"type": "text", "text": {"content": text}}],
-        },
-    }
-
-
-def _paragraph_block(text: str) -> dict:
-    """Build a Notion paragraph block (truncated to 2000 chars)."""
-    return {
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {
-            "rich_text": [{"type": "text", "text": {"content": text[:2000]}}],
-        },
-    }
-
-
-def _build_research_blocks(research_text: str) -> list[dict]:
-    """Build Notion blocks from free-text grounded research."""
-    blocks = [_heading_block("--- Person Research ---")]
-    paragraphs = research_text.split("\n\n")
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        if para.startswith("## "):
-            blocks.append(_heading_block(para.lstrip("# ").strip()))
-        else:
-            blocks.append(_paragraph_block(para[:2000]))
-    return blocks
-
-
 async def _fetch_company_info(
-    notion_client: NotionClient, company_id: str,
+    companies_db: CompaniesDB, company_id: str,
 ) -> tuple[str, str, float | None]:
-    """Retrieve company name, domain, and DPP Fit Score from a company page."""
-    company_page = await notion_client._call(
-        notion_client._sdk.pages.retrieve, page_id=company_id,
+    """Retrieve company name, domain, and DPP Fit Score from a company row."""
+    row = await companies_db._pool.fetchrow(
+        "SELECT name, website, dpp_fit_score FROM companies WHERE id = $1",
+        UUID(company_id),
     )
-    name = extract_title(company_page, "Name")
-    website = extract_url(company_page, "Website")
-    dpp_score = extract_number(company_page, "DPP Fit Score")
+    if not row:
+        return "", "", None
+    name = row["name"] or ""
+    website = row["website"] or ""
+    dpp_score = row["dpp_fit_score"]
     return name, _extract_domain(website), dpp_score
 
 
@@ -102,25 +61,25 @@ async def _research_contact(
     contact: dict,
     config,
     gemini_client: GeminiClient,
-    notion_client: NotionClient,
     contacts_db: ContactsDB,
+    companies_db: CompaniesDB,
 ) -> bool:
-    """Research a single contact: grounded search, store blocks, update status."""
-    contact_id = contact["id"]
-    contact_name = extract_title(contact, "Name")
-    job_title = extract_rich_text(contact, "Job Title")
+    """Research a single contact: grounded search, store body, update status."""
+    contact_id = str(contact["id"])
+    contact_name = contact.get("name", "")
+    job_title = contact.get("job_title", "") or ""
 
-    # Resolve company from relation
-    company_ids = extract_relation_ids(contact, "Company")
-    if not company_ids:
+    # Resolve company from company_id column
+    company_id = contact.get("company_id")
+    if not company_id:
         logger.warning(
-            "Contact '%s' (%s) has no company relation, skipping",
+            "Contact '%s' (%s) has no company_id, skipping",
             contact_name, contact_id,
         )
         return False
 
     company_name, domain, dpp_score = await _fetch_company_info(
-        notion_client, company_ids[0]
+        companies_db, str(company_id)
     )
 
     # Gate: skip contacts whose company is below DPP fit score threshold
@@ -136,7 +95,6 @@ async def _research_contact(
         contact_name, job_title, company_name,
     )
 
-    # Build prompt using .replace() to avoid conflict with braces
     prompt = (
         RESEARCH_PERSON_GROUNDED
         .replace("{contact_name}", contact_name)
@@ -158,14 +116,17 @@ async def _research_contact(
         contact_name, result["input_tokens"], result["output_tokens"],
     )
 
-    # Append research blocks to contact page body
-    blocks = _build_research_blocks(research_text)
-    await notion_client.append_page_body(contact_id, blocks)
+    # Format and append research to contact body
+    body_text = f"--- Person Research ---\n\n{research_text}"
+    existing_body = await contacts_db.get_body(contact_id)
+    if existing_body:
+        new_body = f"{existing_body}\n\n{body_text}"
+    else:
+        new_body = body_text
+    await contacts_db.set_body(contact_id, new_body)
 
-    # Update status only -- Context and Job Title are set by campaign_scoring
-    await contacts_db.update_contact(
-        contact_id, {"Status": select_prop("Researched")}
-    )
+    # Update status
+    await contacts_db.update_contact(contact_id, status="Researched")
     logger.info("Contact '%s' researched and updated", contact_name)
     return True
 
@@ -173,20 +134,20 @@ async def _research_contact(
 async def person_research_worker(
     config,
     gemini_client: GeminiClient,
-    notion_client: NotionClient,
     contacts_db: ContactsDB,
+    companies_db: CompaniesDB,
 ) -> None:
     """Continuous worker: research enriched contacts via grounded Gemini call."""
     logger.info("Person research worker started")
     while True:
         try:
-            filter_obj = {
-                "property": "Status",
-                "select": {"equals": "Enriched"},
-            }
-            contacts = await notion_client.query_database(
-                contacts_db.db_id, filter_obj
+            # Query contacts with status = 'Enriched' directly via SQL
+            rows = await contacts_db._pool.fetch(
+                "SELECT * FROM contacts WHERE status = $1 "
+                "ORDER BY created_at",
+                "Enriched",
             )
+            contacts = [dict(r) for r in rows]
             logger.info(
                 "Person research: found %d enriched contacts", len(contacts),
             )
@@ -198,10 +159,10 @@ async def person_research_worker(
                     try:
                         await _research_contact(
                             contact, config, gemini_client,
-                            notion_client, contacts_db,
+                            contacts_db, companies_db,
                         )
                     except Exception as exc:
-                        name = extract_title(contact, "Name")
+                        name = contact.get("name", "unknown")
                         logger.error(
                             "Error researching contact '%s': %s", name, exc
                         )

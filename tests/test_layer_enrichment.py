@@ -16,8 +16,8 @@ import pytest
 
 from src.layers.enrichment import enrichment_worker
 from src.layers.enrichment_helpers import (
-    build_enrichment_blocks,
-    build_properties_update,
+    build_enrichment_text,
+    build_properties_update_pg,
     scrape_fallback,
 )
 
@@ -27,42 +27,22 @@ from src.layers.enrichment_helpers import (
 # ---------------------------------------------------------------------------
 
 
-def _make_company_page(
+def _make_company(
     page_id: str = "page-1",
     name: str = "TestBrand",
     website: str = "https://testbrand.com",
     status: str = "Discovered",
-    campaign_ids: list[str] | None = None,
 ) -> dict:
-    """Build a minimal Notion company page dict for testing."""
-    if campaign_ids is None:
-        campaign_ids = ["campaign-1"]
-
+    """Build a minimal flat company dict (Postgres row)."""
     return {
         "id": page_id,
-        "properties": {
-            "Name": {"title": [{"plain_text": name}]},
-            "Website": {"url": website},
-            "Status": {"select": {"name": status}},
-            "Campaign": {"relation": [{"id": cid} for cid in campaign_ids]},
-            "Last Enriched": {"date": None},
-        },
-    }
-
-
-def _make_campaign_page(
-    page_id: str = "campaign-1",
-    target_description: str = "EU fashion brands",
-) -> dict:
-    return {
-        "id": page_id,
-        "properties": {
-            "Name": {"title": [{"plain_text": "Test Campaign"}]},
-            "Target Description": {
-                "rich_text": [{"plain_text": target_description}]
-            },
-            "Status": {"select": {"name": "Active"}},
-        },
+        "name": name,
+        "website": website,
+        "status": status,
+        "industry": "Fashion",
+        "location": "Amsterdam",
+        "size": "50-100",
+        "dpp_fit_score": None,
     }
 
 
@@ -170,23 +150,20 @@ def _make_gemini_client(
 def _make_companies_db():
     db = MagicMock()
     db.update_company = AsyncMock(return_value={"id": "page-1"})
+    db.append_body = AsyncMock()
     db.get_companies_by_status = AsyncMock(return_value=[])
     db.get_stale_companies = AsyncMock(return_value=[])
+    # Mock the _pool.fetch for campaign target lookup
+    pool_mock = MagicMock()
+    pool_mock.fetch = AsyncMock(return_value=[])
+    db._pool = pool_mock
     return db
 
 
-def _make_campaigns_db(campaigns=None):
+def _make_campaigns_db():
     db = MagicMock()
-    if campaigns is None:
-        campaigns = [_make_campaign_page()]
-    db.get_processable_campaigns = AsyncMock(return_value=campaigns)
+    db.get_processable_campaigns = AsyncMock(return_value=[])
     return db
-
-
-def _make_notion_client():
-    client = MagicMock()
-    client.append_page_body = AsyncMock()
-    return client
 
 
 def _make_search_client():
@@ -196,105 +173,75 @@ def _make_search_client():
 
 
 # ---------------------------------------------------------------------------
-# Tests: build_enrichment_blocks()
+# Tests: build_enrichment_text()
 # ---------------------------------------------------------------------------
 
 
-class TestBuildEnrichmentBlocks:
+class TestBuildEnrichmentText:
 
-    def test_produces_blocks(self):
+    def test_produces_text(self):
         result = _make_gemini_result()
-        blocks = build_enrichment_blocks(result)
-        assert len(blocks) > 0
-        assert all(isinstance(b, dict) for b in blocks)
+        text = build_enrichment_text(result)
+        assert len(text) > 0
+        assert isinstance(text, str)
 
     def test_contains_dpp_reasoning(self):
         result = _make_gemini_result(score=9)
-        blocks = build_enrichment_blocks(result)
-        texts = []
-        for b in blocks:
-            btype = b.get("type", "")
-            if btype in ("paragraph", "bulleted_list_item", "heading_2"):
-                rich = b.get(btype, {}).get("rich_text", [])
-                for rt in rich:
-                    texts.append(rt.get("text", {}).get("content", ""))
-        combined = " ".join(texts)
-        assert "DPP Fit Assessment" in combined
+        text = build_enrichment_text(result)
+        assert "DPP Fit Assessment" in text
 
     def test_contains_selling_points(self):
         result = _make_gemini_result()
-        blocks = build_enrichment_blocks(result)
-        bullet_texts = []
-        for b in blocks:
-            if b.get("type") == "bulleted_list_item":
-                rich = b["bulleted_list_item"].get("rich_text", [])
-                for rt in rich:
-                    bullet_texts.append(rt.get("text", {}).get("content", ""))
-        assert any("EU-based" in t for t in bullet_texts)
+        text = build_enrichment_text(result)
+        assert "EU-based" in text
 
     def test_contains_eu_presence(self):
         result = _make_gemini_result()
-        blocks = build_enrichment_blocks(result)
-        texts = []
-        for b in blocks:
-            btype = b.get("type", "")
-            if btype in ("paragraph", "heading_2"):
-                rich = b.get(btype, {}).get("rich_text", [])
-                for rt in rich:
-                    texts.append(rt.get("text", {}).get("content", ""))
-        combined = " ".join(texts)
-        assert "EU Presence" in combined
+        text = build_enrichment_text(result)
+        assert "EU Presence" in text
 
     def test_contains_recent_news(self):
         result = _make_gemini_result()
-        blocks = build_enrichment_blocks(result)
-        texts = []
-        for b in blocks:
-            btype = b.get("type", "")
-            if btype in ("paragraph", "heading_2"):
-                rich = b.get(btype, {}).get("rich_text", [])
-                for rt in rich:
-                    texts.append(rt.get("text", {}).get("content", ""))
-        combined = " ".join(texts)
-        assert "Recent News" in combined
+        text = build_enrichment_text(result)
+        assert "Recent News" in text
 
 
 # ---------------------------------------------------------------------------
-# Tests: build_properties_update()
+# Tests: build_properties_update_pg()
 # ---------------------------------------------------------------------------
 
 
-class TestBuildPropertiesUpdate:
+class TestBuildPropertiesUpdatePg:
 
     def test_enriched_status(self):
         result = _make_gemini_result(score=8)
-        props = build_properties_update(result, "Enriched")
-        assert props["Status"] == {"select": {"name": "Enriched"}}
-        assert "Last Enriched" in props
-        assert props["DPP Fit Score"] == {"number": 8}
+        props = build_properties_update_pg(result, "Enriched")
+        assert props["status"] == "Enriched"
+        assert "last_enriched_at" in props
+        assert props["dpp_fit_score"] == 8
 
     def test_partial_status(self):
         result = _make_gemini_result()
-        props = build_properties_update(result, "Partially Enriched")
-        assert props["Status"] == {"select": {"name": "Partially Enriched"}}
+        props = build_properties_update_pg(result, "Partially Enriched")
+        assert props["status"] == "Partially Enriched"
 
     def test_invalid_industry_defaults_to_other(self):
         result = _make_gemini_result()
         result["industry"] = "Automotive"
-        props = build_properties_update(result, "Enriched")
-        assert props["Industry"] == {"select": {"name": "Other"}}
+        props = build_properties_update_pg(result, "Enriched")
+        assert props["industry"] == "Other"
 
     def test_unknown_location_skipped(self):
         result = _make_gemini_result()
         result["location"] = "Unknown"
-        props = build_properties_update(result, "Enriched")
-        assert "Location" not in props
+        props = build_properties_update_pg(result, "Enriched")
+        assert "location" not in props
 
     def test_valid_location_included(self):
         result = _make_gemini_result()
         result["location"] = "Berlin, Germany"
-        props = build_properties_update(result, "Enriched")
-        assert "Location" in props
+        props = build_properties_update_pg(result, "Enriched")
+        assert props["location"] == "Berlin, Germany"
 
 
 # ---------------------------------------------------------------------------
@@ -307,21 +254,20 @@ class TestEnrichmentWorker:
     @pytest.mark.anyio
     async def test_worker_processes_discovered_companies(self):
         """Worker should fetch Discovered companies and enrich them."""
-        page = _make_company_page()
+        page = _make_company()
         config = _make_config()
         scraper = _make_scraper()
         gemini = _make_gemini_client()
         companies_db = _make_companies_db()
         companies_db.get_companies_by_status = AsyncMock(return_value=[page])
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
              patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -335,27 +281,25 @@ class TestEnrichmentWorker:
 
         companies_db.get_companies_by_status.assert_called_with("Discovered")
         companies_db.get_stale_companies.assert_called()
-        # Should have used generate() (not generate_batch)
         gemini.generate.assert_called()
 
     @pytest.mark.anyio
     async def test_worker_uses_grounding_then_structuring(self):
         """Worker should make two generate calls: grounded then structured."""
-        page = _make_company_page()
+        page = _make_company()
         config = _make_config()
         scraper = _make_scraper()
         gemini = _make_gemini_client()
         companies_db = _make_companies_db()
         companies_db.get_companies_by_status = AsyncMock(return_value=[page])
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
              patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -367,32 +311,26 @@ class TestEnrichmentWorker:
             except asyncio.CancelledError:
                 pass
 
-        # Two calls per company: grounded research + structuring
         assert gemini.generate.call_count >= 2
         calls = gemini.generate.call_args_list
-        # First call should have grounding=True
         first_call = calls[0]
         assert first_call.kwargs.get("grounding") is True
-        # Second call should have json_mode=True
         second_call = calls[1]
         assert second_call.kwargs.get("json_mode") is True
 
     @pytest.mark.anyio
     async def test_worker_falls_back_to_scrape(self):
         """When grounded research fails, worker should fall back to scrape."""
-        page = _make_company_page()
+        page = _make_company()
         config = _make_config()
         scraper = _make_scraper()
         gemini = _make_gemini_client(fail_research=True)
         companies_db = _make_companies_db()
         companies_db.get_companies_by_status = AsyncMock(return_value=[page])
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
-        # For fallback, the generate call without grounding needs to work
         fallback_result = _make_gemini_result()
-        original_side_effect = gemini.generate.side_effect
 
         async def _fallback_generate(**kwargs):
             if kwargs.get("grounding"):
@@ -409,7 +347,7 @@ class TestEnrichmentWorker:
              patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -421,20 +359,19 @@ class TestEnrichmentWorker:
             except asyncio.CancelledError:
                 pass
 
-        # Company should be updated with Partially Enriched
         update_calls = companies_db.update_company.call_args_list
         statuses = []
         for call in update_calls:
             props = call[0][1]
-            if "Status" in props:
-                statuses.append(props["Status"]["select"]["name"])
+            if "status" in props:
+                statuses.append(props["status"])
         assert "Partially Enriched" in statuses
 
     @pytest.mark.anyio
     async def test_worker_includes_stale_companies(self):
         """Worker should also include stale companies."""
-        discovered = _make_company_page(page_id="p1", name="Discovered Co")
-        stale = _make_company_page(page_id="p2", name="Stale Co")
+        discovered = _make_company(page_id="p1", name="Discovered Co")
+        stale = _make_company(page_id="p2", name="Stale Co")
 
         config = _make_config()
         scraper = _make_scraper()
@@ -443,14 +380,13 @@ class TestEnrichmentWorker:
         companies_db.get_companies_by_status = AsyncMock(return_value=[discovered])
         companies_db.get_stale_companies = AsyncMock(return_value=[stale])
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
              patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="")):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -462,13 +398,12 @@ class TestEnrichmentWorker:
             except asyncio.CancelledError:
                 pass
 
-        # Both companies should be processed (2 companies x 2 calls each)
         assert gemini.generate.call_count >= 4
 
     @pytest.mark.anyio
     async def test_worker_deduplicates_companies(self):
         """Same company in both Discovered and stale should be processed once."""
-        page = _make_company_page(page_id="same-id", name="DupeCo")
+        page = _make_company(page_id="same-id", name="DupeCo")
 
         config = _make_config()
         scraper = _make_scraper()
@@ -477,14 +412,13 @@ class TestEnrichmentWorker:
         companies_db.get_companies_by_status = AsyncMock(return_value=[page])
         companies_db.get_stale_companies = AsyncMock(return_value=[page])
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
              patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="")):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -496,8 +430,6 @@ class TestEnrichmentWorker:
             except asyncio.CancelledError:
                 pass
 
-        # Each cycle processes 1 company (deduplicated) with 2 calls.
-        # Multiple cycles may run, but call count should be a multiple of 2.
         assert gemini.generate.call_count >= 2
         assert gemini.generate.call_count % 2 == 0
 
@@ -512,13 +444,12 @@ class TestEnrichmentWorker:
             side_effect=Exception("DB error")
         )
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )
@@ -540,13 +471,12 @@ class TestEnrichmentWorker:
         gemini = _make_gemini_client()
         companies_db = _make_companies_db()
         campaigns_db = _make_campaigns_db()
-        notion_client = _make_notion_client()
         search_client = _make_search_client()
 
         with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0):
             task = asyncio.create_task(
                 enrichment_worker(
-                    config, gemini, notion_client,
+                    config, gemini,
                     companies_db, campaigns_db, scraper,
                     search_client,
                 )

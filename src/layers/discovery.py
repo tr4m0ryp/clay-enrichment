@@ -1,10 +1,10 @@
 """
 Layer 1: Company Discovery Worker.
 
-Continuous async loop that polls active campaigns from Notion, generates
-search queries via Gemini, runs searches via SearXNG (self-hosted meta-search),
-extracts company names from results, and writes new companies to the Notion
-Companies DB with dedup.
+Continuous async loop that polls active campaigns, generates search queries
+via Gemini, runs searches via SearXNG (self-hosted meta-search), extracts
+company names from results, and writes new companies to the companies table
+with dedup.
 """
 
 import asyncio
@@ -12,10 +12,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from src.db.campaigns import CampaignsDB
+from src.db.companies import CompaniesDB
 from src.models.gemini import GeminiClient
-from src.notion.databases_campaigns import CampaignsDB
-from src.notion.databases_companies import CompaniesDB
-from src.notion.prop_helpers import extract_title, extract_rich_text
 from src.prompts.discovery import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
 from src.utils.logger import get_logger
 
@@ -26,7 +25,7 @@ _CYCLE_INTERVAL_SECONDS = 300  # 5 minutes between full cycles
 
 @dataclass
 class NotionClients:
-    """Container for the Notion database helpers used by discovery."""
+    """Container for the database helpers used by discovery."""
 
     campaigns: CampaignsDB
     companies: CompaniesDB
@@ -56,7 +55,7 @@ async def discovery_worker(
                     campaign, config, gemini_client, notion_clients, search_client
                 )
             except Exception:
-                campaign_name = extract_title(campaign, "Name")
+                campaign_name = campaign.get("name", "unknown")
                 logger.exception(
                     "Error processing campaign '%s', continuing to next",
                     campaign_name,
@@ -73,9 +72,9 @@ async def discover_companies_for_campaign(
     search_client: Any,
 ) -> None:
     """Run the full discovery pipeline for a single campaign."""
-    campaign_id = campaign["id"]
-    campaign_name = extract_title(campaign, "Name")
-    campaign_target = extract_rich_text(campaign, "Target Description")
+    campaign_id = str(campaign["id"])
+    campaign_name = campaign.get("name", "")
+    campaign_target = campaign.get("target_description", "")
 
     if not campaign_target:
         logger.warning(
@@ -130,7 +129,7 @@ async def discover_companies_for_campaign(
         len(companies),
     )
 
-    # -- Step 4: dedup and write to Notion -----------------------------------
+    # -- Step 4: dedup and write to database ---------------------------------
     new_count, existing_count = await _write_companies(
         notion_clients.companies, companies, campaign_id
     )
@@ -234,8 +233,7 @@ async def _write_companies(
     companies: list[dict],
     campaign_id: str,
 ) -> tuple[int, int]:
-    """
-    Write discovered companies to Notion with dedup.
+    """Write discovered companies to database with dedup.
 
     Returns (new_count, existing_count).
     """
@@ -254,7 +252,6 @@ async def _write_companies(
             existing = await companies_db.find_by_name(name)
             if existing is not None:
                 existing_count += 1
-                # create_company handles campaign linking for existing records
                 await companies_db.create_company(
                     name=name,
                     campaign_id=campaign_id,
