@@ -14,6 +14,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useCampaign } from "@/lib/campaign-context";
+import { AveleroLogo } from "@/components/avelero-logo";
 
 interface NavItem {
   href: string;
@@ -65,10 +66,10 @@ export function Sidebar() {
         style={{ width: 240 }}
       >
         <div
-          className="flex shrink-0 items-center border-b border-border px-5 font-semibold tracking-tight"
+          className="flex shrink-0 items-center border-b border-border px-5"
           style={{ height: 56 }}
         >
-          Clay Enrichment
+          <AveleroLogo height={20} />
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
@@ -106,10 +107,10 @@ export function Sidebar() {
       style={{ width: 240 }}
     >
       <div
-        className="flex shrink-0 items-center border-b border-border px-5 font-semibold tracking-tight"
+        className="flex shrink-0 items-center border-b border-border px-5"
         style={{ height: 56 }}
       >
-        Clay Enrichment
+        <AveleroLogo height={20} />
       </div>
 
       <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">

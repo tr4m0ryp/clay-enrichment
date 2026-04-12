@@ -33,7 +33,11 @@ export default async function SettingsPage() {
     const val = settingsMap[key];
     keyStatus[key] = {
       configured: !!val,
-      hint: val ? `****${val.slice(-4)}` : "",
+      hint: val
+        ? val.length <= 2
+          ? "**"
+          : `${val[0]}${"*".repeat(Math.min(val.length - 2, 8))}${val[val.length - 1]}`
+        : "",
     };
   }
 
