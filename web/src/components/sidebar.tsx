@@ -15,8 +15,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useCampaign } from "@/lib/campaign-context";
-import { useSidebar } from "@/lib/sidebar-context";
 import { AveleroLogo } from "@/components/avelero-logo";
+import { useRef, useState } from "react";
 
 interface NavItem {
   href: string;
@@ -25,7 +25,7 @@ interface NavItem {
   exact?: boolean;
 }
 
-function NavLink({ href, icon, label, exact }: NavItem) {
+function NavLink({ href, icon, label, isExpanded, exact }: NavItem & { isExpanded: boolean }) {
   const pathname = usePathname();
   const isActive = exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
 
@@ -34,14 +34,23 @@ function NavLink({ href, icon, label, exact }: NavItem) {
       href={href}
       title={label}
       className={cn(
-        "sidebar-navlink flex items-center gap-3 rounded px-3 py-2 text-sm font-medium transition-colors",
+        "relative flex items-center h-10 rounded text-sm font-medium transition-colors",
         isActive
           ? "bg-muted text-foreground"
           : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
       )}
     >
-      {icon}
-      <span className="sidebar-label">{label}</span>
+      <div className="flex-shrink-0 w-10 h-10 flex items-center justify-center">
+        {icon}
+      </div>
+      <span
+        className={cn(
+          "truncate transition-opacity duration-150 ease-out",
+          isExpanded ? "opacity-100" : "opacity-0",
+        )}
+      >
+        {label}
+      </span>
     </Link>
   );
 }
@@ -52,7 +61,8 @@ const globalNav: NavItem[] = [
 
 export function Sidebar() {
   const { campaign } = useCampaign();
-  const { toggle } = useSidebar();
+  const [isExpanded, setIsExpanded] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
 
   if (campaign) {
     const base = `/campaigns/${campaign.id}`;
@@ -65,80 +75,102 @@ export function Sidebar() {
     ];
 
     return (
-      <aside className="sidebar fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-background">
+      <aside
+        ref={sidebarRef}
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-background overflow-hidden",
+          "transition-[width] duration-200 ease-out",
+          isExpanded ? "w-60" : "w-14",
+        )}
+        onMouseEnter={() => setIsExpanded(true)}
+        onMouseLeave={() => setIsExpanded(false)}
+      >
         <div
-          className="sidebar-header flex shrink-0 items-center border-b border-border px-5"
+          className="flex shrink-0 items-center border-b border-border overflow-hidden"
           style={{ height: 56 }}
         >
-          <AveleroLogo height={20} />
+          <div className="flex-shrink-0 w-14 h-14 flex items-center justify-center">
+            <AveleroLogo height={20} />
+          </div>
         </div>
 
-        <nav className="sidebar-nav flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           <Link
             href="/"
             title="Back to dashboard"
-            className="sidebar-navlink mb-2 flex items-center gap-2 rounded px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="relative flex items-center h-8 rounded text-xs font-medium text-muted-foreground hover:text-foreground transition-colors mb-1"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span className="sidebar-label">Dashboard</span>
+            <div className="flex-shrink-0 w-10 h-8 flex items-center justify-center">
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </div>
+            <span
+              className={cn(
+                "truncate transition-opacity duration-150 ease-out",
+                isExpanded ? "opacity-100" : "opacity-0",
+              )}
+            >
+              Dashboard
+            </span>
           </Link>
-          <p className="sidebar-label mb-3 truncate px-3 text-sm font-semibold text-foreground">
+          <p
+            className={cn(
+              "mb-2 truncate px-2 text-sm font-semibold text-foreground transition-opacity duration-150 ease-out",
+              isExpanded ? "opacity-100" : "opacity-0",
+            )}
+          >
             {campaign.name}
           </p>
 
           {campaignNav.map((item) => (
-            <NavLink key={item.href} {...item} />
+            <NavLink key={item.href} {...item} isExpanded={isExpanded} />
           ))}
         </nav>
 
-        <div className="sidebar-footer border-t border-border px-3 py-3">
+        <div className="border-t border-border p-2">
           <NavLink
             href="/settings"
             icon={<Settings className="h-4 w-4" />}
             label="Settings"
+            isExpanded={isExpanded}
           />
-          <button
-            onClick={toggle}
-            title="Collapse sidebar"
-            className="sidebar-navlink mt-1 flex w-full items-center gap-3 rounded px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
-          >
-            <PanelLeftClose className="h-4 w-4" />
-            <span className="sidebar-label">Collapse</span>
-          </button>
         </div>
       </aside>
     );
   }
 
   return (
-    <aside className="sidebar fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-background">
+    <aside
+      ref={sidebarRef}
+      className={cn(
+        "fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-background overflow-hidden",
+        "transition-[width] duration-200 ease-out",
+        isExpanded ? "w-60" : "w-14",
+      )}
+      onMouseEnter={() => setIsExpanded(true)}
+      onMouseLeave={() => setIsExpanded(false)}
+    >
       <div
-        className="sidebar-header flex shrink-0 items-center border-b border-border px-5"
+        className="flex shrink-0 items-center border-b border-border overflow-hidden"
         style={{ height: 56 }}
       >
-        <AveleroLogo height={20} />
+        <div className="flex-shrink-0 w-14 h-14 flex items-center justify-center">
+          <AveleroLogo height={20} />
+        </div>
       </div>
 
-      <nav className="sidebar-nav flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
         {globalNav.map((item) => (
-          <NavLink key={item.href} {...item} />
+          <NavLink key={item.href} {...item} isExpanded={isExpanded} />
         ))}
       </nav>
 
-      <div className="sidebar-footer border-t border-border px-3 py-3">
+      <div className="border-t border-border p-2">
         <NavLink
           href="/settings"
           icon={<Settings className="h-4 w-4" />}
           label="Settings"
+          isExpanded={isExpanded}
         />
-        <button
-          onClick={toggle}
-          title="Collapse sidebar"
-          className="sidebar-navlink mt-1 flex w-full items-center gap-3 rounded px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
-        >
-          <PanelLeftClose className="h-4 w-4" />
-          <span className="sidebar-label">Collapse</span>
-        </button>
       </div>
     </aside>
   );
