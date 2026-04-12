@@ -159,7 +159,7 @@ export async function getContactCampaignById(id: string) {
 
 export async function getCompaniesByCampaign(campaignId: string) {
   return sql`
-    SELECT c.*, cc.created_at AS linked_at
+    SELECT c.*
     FROM companies c
     JOIN company_campaigns cc ON c.id = cc.company_id
     WHERE cc.campaign_id = ${campaignId}
@@ -220,6 +220,22 @@ export async function getLeadsByCampaign(campaignId: string) {
     WHERE cc.campaign_id = ${campaignId}
       AND (cc.company_fit_score >= 7 OR cc.relevance_score >= 7)
     ORDER BY cc.relevance_score DESC NULLS LAST, cc.company_fit_score DESC NULLS LAST
+  `;
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export async function getSettings() {
+  return sql`SELECT key, value FROM settings ORDER BY key`;
+}
+
+export async function getSenderAccounts() {
+  return sql`
+    SELECT id, email, daily_limit, is_active, created_at
+    FROM sender_accounts
+    ORDER BY created_at
   `;
 }
 
