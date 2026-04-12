@@ -42,7 +42,7 @@ export default async function CampaignEmailsPage({
   const emails = (await getEmailsByCampaignWithContacts(
     id,
     filter,
-  )) as EmailRow[];
+  )) as unknown as EmailRow[];
 
   return (
     <div>
