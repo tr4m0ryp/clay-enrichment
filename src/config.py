@@ -106,8 +106,11 @@ def _load_config() -> Config:
     }
     missing = [k for k, v in required.items() if not v]
     if missing:
-        print(f"ERROR: Missing required environment variables: {', '.join(missing)}")
-        print("Set them in your .env file before running.")
+        import logging
+        logging.getLogger(__name__).error(
+            "Missing required environment variables: %s. Set them in .env.",
+            ", ".join(missing),
+        )
 
     return cfg
 
