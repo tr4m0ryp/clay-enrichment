@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Table, TableBody, TableRow, TableCell, TableFooter } from "./table";
+import { Table, TableBody, TableRow, TableCell } from "./table";
 
 interface DataTableProps {
   children: React.ReactNode;
@@ -25,18 +25,6 @@ export function DataTable({ children, count, empty, colSpan = 6 }: DataTableProp
                 </TableCell>
               </TableRow>
             </TableBody>
-          )}
-          {count !== undefined && count > 0 && (
-            <TableFooter>
-              <TableRow className="hover:bg-transparent">
-                <TableCell
-                  colSpan={colSpan}
-                  className="h-8 text-xs text-muted-foreground max-w-none border-r-0"
-                >
-                  {count} {count === 1 ? "row" : "rows"}
-                </TableCell>
-              </TableRow>
-            </TableFooter>
           )}
         </Table>
       </div>

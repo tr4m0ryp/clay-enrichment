@@ -44,7 +44,6 @@ export async function getCompanies(status?: string) {
       WHERE c.status = ${status}
       GROUP BY c.id
       ORDER BY c.updated_at DESC
-      LIMIT 100
     `;
   }
   return sql`
@@ -54,7 +53,6 @@ export async function getCompanies(status?: string) {
     LEFT JOIN campaigns camp ON cc.campaign_id = camp.id
     GROUP BY c.id
     ORDER BY c.updated_at DESC
-    LIMIT 100
   `;
 }
 
@@ -84,7 +82,6 @@ export async function getContacts(status?: string) {
       LEFT JOIN companies co ON ct.company_id = co.id
       WHERE ct.status = ${status}
       ORDER BY ct.updated_at DESC
-      LIMIT 100
     `;
   }
   return sql`
@@ -92,7 +89,6 @@ export async function getContacts(status?: string) {
     FROM contacts ct
     LEFT JOIN companies co ON ct.company_id = co.id
     ORDER BY ct.updated_at DESC
-    LIMIT 100
   `;
 }
 
@@ -164,7 +160,6 @@ export async function getCompaniesByCampaign(campaignId: string) {
     JOIN company_campaigns cc ON c.id = cc.company_id
     WHERE cc.campaign_id = ${campaignId}
     ORDER BY c.updated_at DESC
-    LIMIT 200
   `;
 }
 
@@ -176,7 +171,6 @@ export async function getContactsByCampaign(campaignId: string) {
     LEFT JOIN companies co ON ct.company_id = co.id
     WHERE ccl.campaign_id = ${campaignId}
     ORDER BY ct.updated_at DESC
-    LIMIT 200
   `;
 }
 
