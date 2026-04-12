@@ -40,13 +40,21 @@ Return a JSON array of objects. Nothing else.
 ### Field Specifications
 
 - name: Full name as it appears in the search results.
-- title: Job title. Use the most recent title if multiple are found.
+- title: The person's actual job function/role (e.g. "Head of Sustainability", \
+"CEO", "Product Manager", "Supply Chain Director"). Follow these rules strictly:
+  - Strip company names from titles. "VP Sales at Acme Corp" becomes "VP Sales".
+  - Strip location info. "Boston, Massachusetts" is NOT a title -- set to "".
+  - The company name alone is NOT a title. "Acme Corp" or "REPRESENT" is not valid.
+  - LinkedIn headlines that are just company names or slogans are NOT titles.
+  - If no clear job function can be determined, set title to an empty string "".
 - linkedin_url: LinkedIn profile URL if available. Empty string if not found.
 
 ### Rules
 
 - Do NOT fabricate people who are not mentioned in the search results.
-- Do NOT include people who clearly do not work at the target company.
+- Do NOT include people who clearly do not work at the target company. \
+Watch for false positives where a person works at a DIFFERENT company \
+that shares a word with the target (e.g. "Four Kitchens" vs "Four").
 - Do NOT include any text outside the JSON array.
 - Deduplicate by name -- if the same person appears multiple times, include \
 once with the best available information.

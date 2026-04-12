@@ -141,6 +141,7 @@ async def _leads_refresh_loop(
     notion_client: NotionClient,
     contact_campaigns_db,
     campaigns_db,
+    emails_db,
     leads_page_id: str,
 ) -> None:
     """Periodically refresh the High Priority Leads pages."""
@@ -150,7 +151,8 @@ async def _leads_refresh_loop(
         if leads_page_id:
             try:
                 await refresh_leads_pages(
-                    notion_client, contact_campaigns_db, campaigns_db, leads_page_id,
+                    notion_client, contact_campaigns_db, campaigns_db, emails_db,
+                    leads_page_id,
                 )
             except Exception as exc:
                 log.error("Leads refresh failed: %s", exc)
@@ -264,7 +266,8 @@ async def main() -> None:
           contact_campaigns_db]),
         ("email_sender", email_sender_worker, [config, sender_notion]),
         ("leads_refresh", _leads_refresh_loop,
-         [notion_client, contact_campaigns_db, campaigns_db, leads_page_id]),
+         [notion_client, contact_campaigns_db, campaigns_db, emails_db,
+          leads_page_id]),
         ("dashboard_stats", dashboard_stats_worker,
          [notion_client, campaigns_db, companies_db, contacts_db, emails_db,
           contact_campaigns_db]),

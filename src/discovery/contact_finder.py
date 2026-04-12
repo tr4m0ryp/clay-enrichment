@@ -186,22 +186,37 @@ class ContactFinder:
 
     def _extract_title(self, snippet: str, page_title: str) -> str | None:
         """Extract job title from result text. Accepts any role, not just leadership."""
-        # LinkedIn page titles: "Name - Title - Company | LinkedIn"
-        parts = re.split(r"\s*[\|\-]\s*", page_title)
-        if len(parts) >= 2:
-            candidate = parts[1].strip()
-            # Accept if it looks like a job title (not just a company name)
+        # LinkedIn page titles: "Name - Title at Company | LinkedIn"
+        # Split on " | " first, then " - " (with spaces to preserve Co-Founder etc.)
+        before_pipe = page_title.split(" | ")[0] if " | " in page_title else page_title
+        dash_parts = before_pipe.split(" - ")
+        if len(dash_parts) >= 2:
+            candidate = dash_parts[1].strip()
             if candidate and not candidate.lower().startswith("linkedin"):
-                return candidate
+                # Strip "at/@ CompanyName" suffix but keep "of" (part of titles)
+                cleaned = re.sub(
+                    r"\s+(?:at|@)\s+.*$", "", candidate, flags=re.IGNORECASE
+                ).strip()
+                # Reject location-like strings ("City, State, Country")
+                if re.match(r"^[A-Z][a-z]+,\s+[A-Z]", cleaned):
+                    return None
+                if cleaned and len(cleaned) >= 3:
+                    return cleaned
 
         # Try common "Title at Company" patterns in snippet
         match = re.search(
             r"(?:^|\.\s+|,\s+)"
-            r"([A-Z][A-Za-z /&]+(?:of|at|for|,)\s+\w+)",
+            r"([A-Z][A-Za-z /&]+(?:at|for|,)\s+\w+)",
             snippet,
         )
         if match:
-            return match.group(1).strip()
+            title = match.group(1).strip()
+            # Strip "at CompanyName" from snippet matches too
+            title = re.sub(
+                r"\s+(?:at|@)\s+.*$", "", title, flags=re.IGNORECASE
+            ).strip()
+            if title and len(title) >= 3:
+                return title
 
         return None
 
