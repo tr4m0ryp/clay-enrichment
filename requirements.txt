@@ -3,3 +3,4 @@ notion-client<3.0.0
 aiohttp
 python-dotenv
 beautifulsoup4
+asyncpg

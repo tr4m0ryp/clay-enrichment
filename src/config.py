@@ -51,6 +51,9 @@ class Config:
     email_min_delay: int = 180
     email_max_delay: int = 480
 
+    # Database
+    database_url: str = ""
+
     # Enrichment
     enrichment_stale_days: int = 90
 
@@ -97,6 +100,7 @@ def _load_config() -> Config:
         email_daily_limit=int(os.environ.get("EMAIL_DAILY_LIMIT_PER_SENDER", "10")),
         email_min_delay=int(os.environ.get("EMAIL_MIN_DELAY_SECONDS", "180")),
         email_max_delay=int(os.environ.get("EMAIL_MAX_DELAY_SECONDS", "480")),
+        database_url=os.environ.get("DATABASE_URL", "").strip(),
         enrichment_stale_days=int(os.environ.get("ENRICHMENT_STALE_DAYS", "90")),
     )
 
