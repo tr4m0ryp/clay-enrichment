@@ -255,7 +255,7 @@ async def main() -> None:
         ("people", people_worker,
          [config, gemini, people_notion, contact_finder, email_permutator, smtp_verifier]),
         ("person_research", person_research_worker,
-         [config, gemini, notion_client, contacts_db, search_client]),
+         [config, gemini, notion_client, contacts_db]),
         ("campaign_scoring", campaign_scoring_worker,
          [config, gemini, notion_client, contacts_db, companies_db, campaigns_db,
           contact_campaigns_db]),

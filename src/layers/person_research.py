@@ -1,14 +1,16 @@
 """Layer 3b: Person research worker.
 
-Picks up contacts with status "Enriched", researches each via SearXNG
-web search, synthesizes findings via Gemini, and appends structured
-research to the contact page body. Updates status to "Researched".
+Picks up contacts with status "Enriched", researches each via a single
+Gemini call with Google Search grounding, and appends free-text research
+to the contact page body. Updates status to "Researched".
+
+Structuring (Context, Job Title, scoring) is handled downstream by
+the campaign_scoring layer.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from urllib.parse import urlparse
 
@@ -22,10 +24,8 @@ from src.notion.prop_helpers import (
     extract_url,
     extract_relation_ids,
     select_prop,
-    rich_text_prop,
 )
-from src.prompts.person_research import RESEARCH_PERSON
-from src.search.searxng import SearXNGClient, SearchResult
+from src.prompts.person_research import RESEARCH_PERSON_GROUNDED
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +46,6 @@ def _extract_domain(website_url: str) -> str:
         return host[4:] if host.startswith("www.") else host
     except Exception:
         return ""
-
-
-def _deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
-    """Remove duplicate search results by URL, preserving order."""
-    seen: set[str] = set()
-    unique: list[SearchResult] = []
-    for r in results:
-        if r.url and r.url not in seen:
-            seen.add(r.url)
-            unique.append(r)
-    return unique
-
-
-def _format_search_results(results: list[SearchResult]) -> str:
-    """Format search results as numbered text for the LLM prompt."""
-    if not results:
-        return "(no search results found)"
-    parts = []
-    for i, r in enumerate(results, 1):
-        entry = f"[{i}] {r.title}\n    URL: {r.url}"
-        if r.snippet:
-            entry += f"\n    Snippet: {r.snippet}"
-        parts.append(entry)
-    return "\n\n".join(parts)
 
 
 def _heading_block(text: str) -> dict:
@@ -94,29 +70,18 @@ def _paragraph_block(text: str) -> dict:
     }
 
 
-def _build_research_blocks(research: dict) -> list[dict]:
-    """Build Notion page body blocks from parsed research JSON."""
-    blocks: list[dict] = []
-    blocks.append(_heading_block("--- Person Research ---"))
-
-    bg = research.get("professional_background", "") or "(no data)"
-    blocks.append(_heading_block("Professional Background"))
-    blocks.append(_paragraph_block(bg))
-
-    activity = research.get("public_activity", "") or "(no data)"
-    blocks.append(_heading_block("Public Activity"))
-    blocks.append(_paragraph_block(activity))
-
-    topics = research.get("key_topics", [])
-    blocks.append(_heading_block("Key Topics"))
-    blocks.append(_paragraph_block(", ".join(topics) if topics else "(none)"))
-
-    signals = research.get("relevance_signals", "") or "(no data)"
-    blocks.append(_heading_block("Relevance Signals"))
-    blocks.append(_paragraph_block(signals))
-
-    quality = research.get("research_quality", "low")
-    blocks.append(_heading_block(f"Research Quality: {quality}"))
+def _build_research_blocks(research_text: str) -> list[dict]:
+    """Build Notion blocks from free-text grounded research."""
+    blocks = [_heading_block("--- Person Research ---")]
+    paragraphs = research_text.split("\n\n")
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        if para.startswith("## "):
+            blocks.append(_heading_block(para.lstrip("# ").strip()))
+        else:
+            blocks.append(_paragraph_block(para[:2000]))
     return blocks
 
 
@@ -133,47 +98,14 @@ async def _fetch_company_info(
     return name, _extract_domain(website), dpp_score
 
 
-async def _run_searches(
-    search_client: SearXNGClient,
-    contact_name: str,
-    company_name: str,
-    domain: str,
-) -> list[SearchResult]:
-    """Run SearXNG searches (general, LinkedIn, domain) and deduplicate."""
-    general_query = f'"{contact_name}" "{company_name}"'
-    linkedin_query = f'"{contact_name}" "{company_name}"'
-
-    tasks = [
-        search_client.search(general_query, num_results=10),
-        search_client.search_site(
-            linkedin_query, "linkedin.com/in", num_results=5
-        ),
-    ]
-    if domain:
-        tasks.append(search_client.search(
-            f'"{contact_name}" site:{domain}', num_results=5
-        ))
-
-    results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-
-    all_results: list[SearchResult] = []
-    for result in results_lists:
-        if isinstance(result, Exception):
-            logger.warning("Search query failed: %s", result)
-            continue
-        all_results.extend(result)
-    return _deduplicate_results(all_results)
-
-
 async def _research_contact(
     contact: dict,
     config,
     gemini_client: GeminiClient,
     notion_client: NotionClient,
     contacts_db: ContactsDB,
-    search_client: SearXNGClient,
 ) -> bool:
-    """Research a single contact: search, synthesize, store, update status."""
+    """Research a single contact: grounded search, store blocks, update status."""
     contact_id = contact["id"]
     contact_name = extract_title(contact, "Name")
     job_title = extract_rich_text(contact, "Job Title")
@@ -204,58 +136,36 @@ async def _research_contact(
         contact_name, job_title, company_name,
     )
 
-    # Run searches and format for prompt
-    search_results = await _run_searches(
-        search_client, contact_name, company_name, domain
-    )
-    formatted_results = _format_search_results(search_results)
-
-    # Build prompt using .replace() to avoid conflict with JSON braces
+    # Build prompt using .replace() to avoid conflict with braces
     prompt = (
-        RESEARCH_PERSON
+        RESEARCH_PERSON_GROUNDED
         .replace("{contact_name}", contact_name)
         .replace("{contact_title}", job_title or "Unknown")
         .replace("{company_name}", company_name)
         .replace("{company_domain}", domain or "Unknown")
-        .replace("{search_results}", formatted_results)
     )
 
     result = await gemini_client.generate(
         prompt=prompt,
         user_message=f"Research {contact_name} at {company_name}",
-        model=config.model_scoring,
-        json_mode=True,
+        model=config.model_research,
+        grounding=True,
     )
 
-    research = json.loads(result["text"])
-    quality = research.get("research_quality", "low")
+    research_text = result["text"]
     logger.info(
-        "Research for '%s': quality=%s | in=%d out=%d tokens",
-        contact_name, quality,
-        result["input_tokens"], result["output_tokens"],
+        "Research for '%s': in=%d out=%d tokens",
+        contact_name, result["input_tokens"], result["output_tokens"],
     )
 
     # Append research blocks to contact page body
-    await notion_client.append_page_body(
-        contact_id, _build_research_blocks(research)
+    blocks = _build_research_blocks(research_text)
+    await notion_client.append_page_body(contact_id, blocks)
+
+    # Update status only -- Context and Job Title are set by campaign_scoring
+    await contacts_db.update_contact(
+        contact_id, {"Status": select_prop("Researched")}
     )
-
-    # Write context_summary to Contact's Context property
-    update_props: dict = {"Status": select_prop("Researched")}
-    context_summary = research.get("context_summary", "")
-    if context_summary:
-        update_props["Context"] = rich_text_prop(context_summary)
-
-    # Update Job Title if LLM determined a more accurate role
-    determined_role = research.get("determined_role", "")
-    if determined_role and determined_role != job_title:
-        update_props["Job Title"] = rich_text_prop(determined_role)
-        logger.info(
-            "Updated job title for '%s': '%s' -> '%s'",
-            contact_name, job_title, determined_role,
-        )
-
-    await contacts_db.update_contact(contact_id, update_props)
     logger.info("Contact '%s' researched and updated", contact_name)
     return True
 
@@ -265,9 +175,8 @@ async def person_research_worker(
     gemini_client: GeminiClient,
     notion_client: NotionClient,
     contacts_db: ContactsDB,
-    search_client: SearXNGClient,
 ) -> None:
-    """Continuous worker: research enriched contacts via web search + LLM."""
+    """Continuous worker: research enriched contacts via grounded Gemini call."""
     logger.info("Person research worker started")
     while True:
         try:
@@ -289,12 +198,7 @@ async def person_research_worker(
                     try:
                         await _research_contact(
                             contact, config, gemini_client,
-                            notion_client, contacts_db, search_client,
-                        )
-                    except json.JSONDecodeError as exc:
-                        name = extract_title(contact, "Name")
-                        logger.error(
-                            "Failed to parse research for '%s': %s", name, exc
+                            notion_client, contacts_db,
                         )
                     except Exception as exc:
                         name = extract_title(contact, "Name")
