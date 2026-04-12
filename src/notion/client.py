@@ -266,6 +266,9 @@ class NotionClient:
         """
         Update properties on an existing Notion database schema.
 
+        Uses raw HTTP because the notion-client SDK does not reliably
+        forward database property updates in recent versions.
+
         Args:
             database_id: The Notion database UUID.
             properties: Property schema updates.
@@ -273,10 +276,23 @@ class NotionClient:
         Returns:
             The updated database object.
         """
-        result = await self._call(
-            self._sdk.databases.update,
-            database_id=database_id,
-            properties=properties,
+        import httpx as _httpx
+
+        await self._limiter.acquire(_RATE_LIMIT_KEY)
+        cfg = get_config()
+        headers = {
+            "Authorization": f"Bearer {cfg.notion_api_key}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+        }
+        body: dict = {"properties": properties}
+        resp = await asyncio.to_thread(
+            _httpx.patch,
+            f"https://api.notion.com/v1/databases/{database_id}",
+            headers=headers,
+            json=body,
         )
+        resp.raise_for_status()
+        result = resp.json()
         logger.debug("update_database: updated schema for %s", database_id)
         return result
