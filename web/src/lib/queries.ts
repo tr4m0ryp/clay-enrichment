@@ -19,14 +19,40 @@ export async function getCampaignById(id: string) {
 
 export async function getCompanies(status?: string) {
   if (status) {
-    return sql`SELECT * FROM companies WHERE status = ${status} ORDER BY updated_at DESC`;
+    return sql`
+      SELECT c.*, array_agg(DISTINCT camp.name) FILTER (WHERE camp.name IS NOT NULL) AS campaign_names
+      FROM companies c
+      LEFT JOIN company_campaigns cc ON c.id = cc.company_id
+      LEFT JOIN campaigns camp ON cc.campaign_id = camp.id
+      WHERE c.status = ${status}
+      GROUP BY c.id
+      ORDER BY c.updated_at DESC
+      LIMIT 100
+    `;
   }
-  return sql`SELECT * FROM companies ORDER BY updated_at DESC`;
+  return sql`
+    SELECT c.*, array_agg(DISTINCT camp.name) FILTER (WHERE camp.name IS NOT NULL) AS campaign_names
+    FROM companies c
+    LEFT JOIN company_campaigns cc ON c.id = cc.company_id
+    LEFT JOIN campaigns camp ON cc.campaign_id = camp.id
+    GROUP BY c.id
+    ORDER BY c.updated_at DESC
+    LIMIT 100
+  `;
 }
 
 export async function getCompanyById(id: string) {
   const rows = await sql`SELECT * FROM companies WHERE id = ${id}`;
   return rows[0] ?? null;
+}
+
+export async function getCampaignsByCompany(companyId: string) {
+  return sql`
+    SELECT camp.* FROM campaigns camp
+    JOIN company_campaigns cc ON camp.id = cc.campaign_id
+    WHERE cc.company_id = ${companyId}
+    ORDER BY camp.name
+  `;
 }
 
 // ---------------------------------------------------------------------------
@@ -35,13 +61,31 @@ export async function getCompanyById(id: string) {
 
 export async function getContacts(status?: string) {
   if (status) {
-    return sql`SELECT * FROM contacts WHERE status = ${status} ORDER BY updated_at DESC`;
+    return sql`
+      SELECT ct.*, co.name AS company_name
+      FROM contacts ct
+      LEFT JOIN companies co ON ct.company_id = co.id
+      WHERE ct.status = ${status}
+      ORDER BY ct.updated_at DESC
+      LIMIT 100
+    `;
   }
-  return sql`SELECT * FROM contacts ORDER BY updated_at DESC`;
+  return sql`
+    SELECT ct.*, co.name AS company_name
+    FROM contacts ct
+    LEFT JOIN companies co ON ct.company_id = co.id
+    ORDER BY ct.updated_at DESC
+    LIMIT 100
+  `;
 }
 
 export async function getContactById(id: string) {
-  const rows = await sql`SELECT * FROM contacts WHERE id = ${id}`;
+  const rows = await sql`
+    SELECT ct.*, co.name AS company_name
+    FROM contacts ct
+    LEFT JOIN companies co ON ct.company_id = co.id
+    WHERE ct.id = ${id}
+  `;
   return rows[0] ?? null;
 }
 
