@@ -9,7 +9,7 @@ export async function updateCampaignStatus(id: string, status: string) {
     throw new Error(`Invalid status: ${status}`);
   }
   await sql`UPDATE campaigns SET status = ${status}, updated_at = now() WHERE id = ${id}`;
-  revalidatePath("/campaigns");
+  revalidatePath("/");
   revalidatePath(`/campaigns/${id}`);
 }
 
@@ -20,5 +20,5 @@ export async function updateTargetDescription(id: string, description: string) {
 
 export async function createCampaign(name: string, targetDescription: string) {
   await sql`INSERT INTO campaigns (name, target_description) VALUES (${name}, ${targetDescription})`;
-  revalidatePath("/campaigns");
+  revalidatePath("/");
 }
