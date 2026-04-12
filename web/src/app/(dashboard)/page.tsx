@@ -1,188 +1,157 @@
-import { sql } from "@/lib/db";
-import { StatsCard } from "@/components/stats-card";
-import { CampaignSummary } from "@/components/campaign-summary";
+import Link from "next/link";
 import {
-  TableHeader,
+  getCampaigns,
+  getDashboardStats,
+  getCampaignEmailTimeline,
+} from "@/lib/queries";
+import { StatsCard } from "@/components/stats-card";
+import { CampaignChart } from "@/components/campaign-chart";
+import { Badge } from "@/components/ui/badge";
+import {
   TableBody,
-  TableRow,
-  TableHead,
   TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { DataTable } from "@/components/ui/data-table";
-import { Badge } from "@/components/ui/badge";
+import { CreateCampaignForm } from "./campaigns/create-campaign-form";
 
 export const dynamic = "force-dynamic";
 
-async function getDashboardData() {
-  const [
-    companiesCount,
-    contactsCount,
-    highPriorityLeads,
-    emailsSent,
-    campaignRows,
-    recentCompanies,
-  ] = await Promise.all([
-    sql`SELECT count(*)::int AS count FROM companies`,
-    sql`SELECT count(*)::int AS count FROM contacts`,
-    sql`
-      SELECT count(*)::int AS count
-      FROM contact_campaigns
-      WHERE relevance_score >= 7
-    `,
-    sql`
-      SELECT count(*)::int AS count
-      FROM emails
-      WHERE status = 'Sent'
-    `,
-    sql`
-      SELECT
-        c.id,
-        c.name,
-        c.status,
-        coalesce(cc_co.cnt, 0)::int AS companies,
-        coalesce(cc_l.cnt, 0)::int  AS leads,
-        coalesce(e.cnt, 0)::int     AS emails
-      FROM campaigns c
-      LEFT JOIN (
-        SELECT campaign_id, count(*) AS cnt
-        FROM company_campaigns
-        GROUP BY campaign_id
-      ) cc_co ON cc_co.campaign_id = c.id
-      LEFT JOIN (
-        SELECT campaign_id, count(*) AS cnt
-        FROM contact_campaigns
-        GROUP BY campaign_id
-      ) cc_l ON cc_l.campaign_id = c.id
-      LEFT JOIN (
-        SELECT campaign_id, count(*) AS cnt
-        FROM emails
-        GROUP BY campaign_id
-      ) e ON e.campaign_id = c.id
-      ORDER BY c.created_at DESC
-    `,
-    sql`
-      SELECT id, name, status, industry, updated_at
-      FROM companies
-      ORDER BY updated_at DESC
-      LIMIT 10
-    `,
-  ]);
-
-  return {
-    companies: companiesCount[0].count as number,
-    contacts: contactsCount[0].count as number,
-    highPriorityLeads: highPriorityLeads[0].count as number,
-    emailsSent: emailsSent[0].count as number,
-    campaignRows: campaignRows as unknown as Array<{
-      id: string;
-      name: string;
-      status: string;
-      companies: number;
-      leads: number;
-      emails: number;
-    }>,
-    recentCompanies: recentCompanies as unknown as Array<{
-      id: string;
-      name: string;
-      status: string;
-      industry: string | null;
-      updated_at: Date;
-    }>,
-  };
-}
-
-function companyStatusVariant(status: string) {
+function statusBadgeVariant(status: string) {
   switch (status) {
-    case "Enriched":
-      return "success" as const;
-    case "Partially Enriched":
-      return "warning" as const;
-    case "Contacts Found":
-      return "brand" as const;
+    case "Active":
+      return "brand";
+    case "Paused":
+      return "default";
+    case "Completed":
+      return "success";
+    case "Abort":
+      return "destructive";
     default:
-      return "outline" as const;
+      return "outline";
   }
 }
 
+function formatDate(date: string | Date) {
+  return new Date(date).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export default async function DashboardPage() {
-  const data = await getDashboardData();
+  const [stats, campaigns, timeline] = await Promise.all([
+    getDashboardStats(),
+    getCampaigns(),
+    getCampaignEmailTimeline(),
+  ]);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Pipeline overview and key metrics.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Operations overview and campaigns.
+          </p>
+        </div>
+        <CreateCampaignForm />
       </div>
 
-      {/* Stat cards */}
+      {/* Operational stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Companies"
-          value={data.companies}
-          description="Total discovered companies"
-        />
-        <StatsCard
-          title="Contacts"
-          value={data.contacts}
-          description="Total contacts found"
-        />
-        <StatsCard
-          title="High-Priority Leads"
-          value={data.highPriorityLeads}
-          description="Relevance score >= 7"
-          highlight
-        />
-        <StatsCard
           title="Emails Sent"
-          value={data.emailsSent}
+          value={stats.emailsSent}
           description="Successfully delivered"
           highlight
         />
+        <StatsCard
+          title="Emails Pending"
+          value={stats.emailsPending}
+          description="Awaiting review or send"
+        />
+        <StatsCard
+          title="Emails Failed"
+          value={stats.emailsFailed}
+          description="Bounced or failed"
+        />
+        <StatsCard
+          title="Active Campaigns"
+          value={stats.activeCampaigns}
+          description="Currently running"
+          highlight
+        />
       </div>
 
-      {/* Campaign summary */}
-      <CampaignSummary rows={data.campaignRows} />
-
-      {/* Recent activity */}
+      {/* Campaign progress chart */}
       <div>
         <h2 className="mb-3 text-sm font-semibold text-foreground">
-          Recent Activity
+          Campaign Progress
+        </h2>
+        <div className="rounded-md border border-border p-4">
+          <CampaignChart
+            data={timeline as unknown as Array<{
+              campaign_id: string;
+              campaign_name: string;
+              day: string;
+              cumulative: number;
+            }>}
+          />
+        </div>
+      </div>
+
+      {/* Campaigns table */}
+      <div>
+        <h2 className="mb-3 text-sm font-semibold text-foreground">
+          Campaigns
         </h2>
         <DataTable
-          count={data.recentCompanies.length}
-          empty="No companies yet."
-          colSpan={4}
+          count={campaigns.length}
+          empty="No campaigns yet."
+          colSpan={6}
         >
           <TableHeader>
             <TableRow>
-              <TableHead>Company</TableHead>
-              <TableHead>Industry</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="text-right">Updated</TableHead>
+              <TableHead>Target Description</TableHead>
+              <TableHead className="text-right">Companies</TableHead>
+              <TableHead className="text-right">Contacts</TableHead>
+              <TableHead>Created</TableHead>
             </TableRow>
           </TableHeader>
-          {data.recentCompanies.length > 0 && (
+          {campaigns.length > 0 && (
             <TableBody>
-              {data.recentCompanies.map((company) => (
-                <TableRow key={company.id}>
+              {campaigns.map((c: Record<string, unknown>) => (
+                <TableRow key={c.id as string}>
                   <TableCell className="font-medium">
-                    {company.name}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {company.industry ?? "--"}
+                    <Link
+                      href={`/campaigns/${c.id}`}
+                      className="text-foreground hover:text-primary hover:underline underline-offset-4"
+                    >
+                      {c.name as string}
+                    </Link>
                   </TableCell>
                   <TableCell>
-                    <Badge variant={companyStatusVariant(company.status)}>
-                      {company.status}
+                    <Badge variant={statusBadgeVariant(c.status as string)}>
+                      {c.status as string}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right text-muted-foreground tabular-nums">
-                    {new Date(company.updated_at).toLocaleDateString(
-                      "en-US",
-                      { month: "short", day: "numeric" },
-                    )}
+                  <TableCell className="text-muted-foreground">
+                    {(c.target_description as string)?.slice(0, 80) || "--"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {(c.company_count as number) ?? 0}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {(c.contact_count as number) ?? 0}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {formatDate(c.created_at as string)}
                   </TableCell>
                 </TableRow>
               ))}

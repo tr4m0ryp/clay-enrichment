@@ -237,20 +237,43 @@ export async function getSenderAccounts() {
 // Stats (dashboard)
 // ---------------------------------------------------------------------------
 
-export async function getStats() {
-  const [campaigns, companies, contacts, emails, leads] = await Promise.all([
-    sql`SELECT count(*)::int AS count FROM campaigns`,
-    sql`SELECT count(*)::int AS count FROM companies`,
-    sql`SELECT count(*)::int AS count FROM contacts`,
-    sql`SELECT count(*)::int AS count FROM emails`,
-    sql`SELECT count(*)::int AS count FROM contact_campaigns`,
-  ]);
+export async function getDashboardStats() {
+  const [emailsSent, emailsPending, emailsFailed, activeCampaigns] =
+    await Promise.all([
+      sql`SELECT count(*)::int AS count FROM emails WHERE status = 'Sent'`,
+      sql`SELECT count(*)::int AS count FROM emails WHERE status = 'Pending'`,
+      sql`SELECT count(*)::int AS count FROM emails WHERE status IN ('Failed', 'Bounced')`,
+      sql`SELECT count(*)::int AS count FROM campaigns WHERE status = 'Active'`,
+    ]);
 
   return {
-    campaigns: campaigns[0].count,
-    companies: companies[0].count,
-    contacts: contacts[0].count,
-    emails: emails[0].count,
-    leads: leads[0].count,
+    emailsSent: emailsSent[0].count as number,
+    emailsPending: emailsPending[0].count as number,
+    emailsFailed: emailsFailed[0].count as number,
+    activeCampaigns: activeCampaigns[0].count as number,
   };
+}
+
+export async function getCampaignEmailTimeline() {
+  return sql`
+    SELECT
+      c.id AS campaign_id,
+      c.name AS campaign_name,
+      e.day,
+      e.daily_count,
+      sum(e.daily_count) OVER (
+        PARTITION BY c.id ORDER BY e.day
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+      )::int AS cumulative
+    FROM campaigns c
+    JOIN (
+      SELECT
+        campaign_id,
+        date_trunc('day', created_at)::date AS day,
+        count(*)::int AS daily_count
+      FROM emails
+      GROUP BY campaign_id, date_trunc('day', created_at)::date
+    ) e ON e.campaign_id = c.id
+    ORDER BY e.day
+  `;
 }
