@@ -6,17 +6,11 @@ import json
 import logging
 
 from src.config import Config
+from src.db.campaigns import CampaignsDB
+from src.db.companies import CompaniesDB
+from src.db.contacts import ContactsDB
+from src.db.contact_campaigns import ContactCampaignsDB
 from src.models.gemini import GeminiClient
-from src.notion.client import NotionClient
-from src.notion.databases_campaigns import CampaignsDB
-from src.notion.databases_companies import CompaniesDB
-from src.notion.databases_contacts import ContactsDB
-from src.notion.databases_contact_campaigns import ContactCampaignsDB
-from src.notion.prop_helpers import (
-    extract_title, extract_rich_text, extract_email, extract_url,
-    extract_checkbox, extract_number, extract_select, extract_relation_ids,
-    rich_text_prop,
-)
 from src.prompts.campaign_scoring import STRUCTURE_AND_SCORE_PERSON
 
 logger = logging.getLogger(__name__)
@@ -29,56 +23,45 @@ _EMPTY_COMPANY: dict = {
 }
 
 
-def _blocks_to_text(blocks: list[dict]) -> str:
-    """Extract plain text from Notion block objects."""
-    parts = []
-    for block in blocks:
-        btype = block.get("type", "")
-        rich_texts = block.get(btype, {}).get("rich_text", [])
-        text = "".join(rt.get("plain_text", "") for rt in rich_texts)
-        if text:
-            parts.append(text)
-    return "\n".join(parts)
-
-
 def _extract_contact_fields(contact: dict) -> dict:
-    """Extract denormalized contact fields from a contact page."""
+    """Extract denormalized contact fields from a DB row."""
     return {
-        "contact_name": extract_title(contact, "Name"),
-        "job_title": extract_rich_text(contact, "Job Title"),
-        "email": extract_email(contact, "Email"),
-        "email_verified": extract_checkbox(contact, "Email Verified"),
-        "linkedin_url": extract_url(contact, "LinkedIn URL"),
+        "contact_name": contact.get("name") or "",
+        "job_title": contact.get("job_title") or "",
+        "email": contact.get("email") or "",
+        "email_verified": contact.get("email_verified") or False,
+        "linkedin_url": contact.get("linkedin_url") or "",
     }
 
 
 def _extract_company_fields(company: dict) -> dict:
-    """Extract denormalized company fields from a company page."""
+    """Extract denormalized company fields from a DB row."""
     return {
-        "company_name": extract_title(company, "Name"),
-        "industry": extract_select(company, "Industry") or "Other",
-        "location": extract_rich_text(company, "Location"),
-        "company_fit_score": extract_number(company, "DPP Fit Score") or 0,
+        "company_name": company.get("name") or "",
+        "industry": company.get("industry") or "Other",
+        "location": company.get("location") or "",
+        "company_fit_score": company.get("dpp_fit_score") or 0,
     }
 
 
 async def _fetch_company_map(
-    contacts: list[dict], companies_db: CompaniesDB
+    contacts: list[dict], companies_db: CompaniesDB,
 ) -> dict[str, dict]:
-    """Pre-fetch company data for all contacts, keyed by company page ID."""
+    """Pre-fetch company data for all contacts, keyed by company UUID string."""
     needed: set[str] = set()
     for c in contacts:
-        cids = extract_relation_ids(c, "Company")
-        if cids:
-            needed.add(cids[0])
+        cid = c.get("company_id")
+        if cid:
+            needed.add(str(cid))
     if not needed:
         return {}
+
     result: dict[str, dict] = {}
     for status in ("Enriched", "Partially Enriched", "Contacts Found"):
-        for page in await companies_db.get_companies_by_status(status):
-            pid = page["id"]
+        for row in await companies_db.get_companies_by_status(status):
+            pid = str(row["id"])
             if pid in needed and pid not in result:
-                result[pid] = _extract_company_fields(page)
+                result[pid] = _extract_company_fields(row)
     return result
 
 
@@ -134,38 +117,39 @@ async def _score_with_llm(
 
 async def _process_pair(
     contact: dict, campaign: dict, config: Config,
-    gemini_client: GeminiClient, notion_client: NotionClient,
+    gemini_client: GeminiClient,
     contacts_db: ContactsDB, contact_campaigns_db: ContactCampaignsDB,
+    companies_db: CompaniesDB,
     company_fields: dict, company_id: str,
     updated_contacts: set[str],
 ) -> bool:
     """Score one contact against one campaign. Returns True if scored."""
-    contact_id, campaign_id = contact["id"], campaign["id"]
+    contact_id = str(contact["id"])
+    campaign_id = str(campaign["id"])
 
     # Dedup: skip if already scored
     existing = await contact_campaigns_db.find_by_contact_campaign(
         contact_id, campaign_id)
     if existing:
-        if (extract_number(existing, "Relevance Score") or 0) > 0:
+        if (existing.get("relevance_score") or 0) > 0:
             return False
 
     cf = _extract_contact_fields(contact)
-    campaign_name = extract_title(campaign, "Name")
-    campaign_target = extract_rich_text(campaign, "Target Description")
+    campaign_name = campaign.get("name") or ""
+    campaign_target = campaign.get("target_description") or ""
 
-    # Read FULL contact page body as primary research source
+    # Read contact body as primary research source
     person_research = ""
     try:
-        person_research = _blocks_to_text(
-            await notion_client.get_page_body(contact_id))
+        person_research = await contacts_db.get_body(contact_id)
     except Exception as exc:
         logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
 
+    # Read company body for company summary
     company_summary = ""
     if company_id:
         try:
-            company_summary = _blocks_to_text(
-                await notion_client.get_page_body(company_id))
+            company_summary = await companies_db.get_body(company_id)
         except Exception as exc:
             logger.warning("Cannot read company body: %s", exc)
 
@@ -177,15 +161,15 @@ async def _process_pair(
 
     # Update contact-level fields (first campaign to process wins)
     if contact_id not in updated_contacts:
-        update_props: dict = {}
+        update_kw: dict = {}
         determined_role = sr.get("determined_role", "")
         if determined_role and determined_role != cf["job_title"]:
-            update_props["Job Title"] = rich_text_prop(determined_role)
+            update_kw["job_title"] = determined_role
         context_summary = sr.get("context_summary", "")
         if context_summary:
-            update_props["Context"] = rich_text_prop(context_summary)
-        if update_props:
-            await contacts_db.update_contact(contact_id, update_props)
+            update_kw["context"] = context_summary
+        if update_kw:
+            await contacts_db.update_contact(contact_id, **update_kw)
         updated_contacts.add(contact_id)
 
     # Junction record fields
@@ -197,7 +181,7 @@ async def _process_pair(
     # Write junction record (update existing or create new)
     if existing:
         await contact_campaigns_db.update_score(
-            existing["id"], relevance_score,
+            str(existing["id"]), relevance_score,
             score_reasoning, personalized_context)
     else:
         await contact_campaigns_db.create_entry(
@@ -221,7 +205,7 @@ async def _process_pair(
 
 
 async def campaign_scoring_worker(
-    config: Config, gemini_client: GeminiClient, notion_client: NotionClient,
+    config: Config, gemini_client: GeminiClient,
     contacts_db: ContactsDB, companies_db: CompaniesDB,
     campaigns_db: CampaignsDB, contact_campaigns_db: ContactCampaignsDB,
 ) -> None:
@@ -235,10 +219,7 @@ async def campaign_scoring_worker(
                 await asyncio.sleep(_CYCLE_INTERVAL)
                 continue
 
-            contacts = await notion_client.query_database(
-                contacts_db.db_id,
-                filter_obj={"property": "Status", "select": {"equals": "Researched"}},
-            )
+            contacts = await contacts_db.get_contacts_by_status("Researched")
             if not contacts:
                 logger.debug("Campaign scoring: no researched contacts")
                 await asyncio.sleep(_CYCLE_INTERVAL)
@@ -259,21 +240,20 @@ async def campaign_scoring_worker(
                     try:
                         if await _process_pair(
                             contact, campaign, config, gemini_client,
-                            notion_client, contacts_db,
-                            contact_campaigns_db, cfields, cid,
+                            contacts_db, contact_campaigns_db,
+                            companies_db, cfields, cid,
                             updated_contacts,
                         ):
                             async with scored_lock:
                                 scored += 1
                     except Exception as exc:
                         logger.error("Error scoring '%s' x '%s': %s",
-                                     extract_title(contact, "Name"),
-                                     extract_title(campaign, "Name"), exc)
+                                     contact.get("name", "?"),
+                                     campaign.get("name", "?"), exc)
 
             tasks = []
             for contact in contacts:
-                cids = extract_relation_ids(contact, "Company")
-                cid = cids[0] if cids else ""
+                cid = str(contact["company_id"]) if contact.get("company_id") else ""
                 cfields = company_map.get(cid, _EMPTY_COMPANY)
 
                 # Gate: skip contacts whose company is below DPP fit threshold
@@ -281,7 +261,7 @@ async def campaign_scoring_worker(
                 if company_score < MIN_DPP_FIT_SCORE:
                     logger.info(
                         "Campaign scoring: skipping '%s' (company DPP=%s, min=%d)",
-                        extract_title(contact, "Name"),
+                        contact.get("name", "?"),
                         company_score, MIN_DPP_FIT_SCORE,
                     )
                     continue
