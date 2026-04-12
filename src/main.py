@@ -1,7 +1,7 @@
 """
 Main orchestrator and entry point.
 
-Loads config, initializes all clients, runs Notion database setup,
+Loads config, creates asyncpg connection pool and DB instances,
 and launches all workers as concurrent asyncio tasks with supervision
 and graceful shutdown.
 
@@ -18,10 +18,12 @@ from src.config import get_config, Config
 from src.utils.logger import setup_logging, get_logger
 from src.utils.rate_limiter import RateLimiter, DEFAULT_LIMITS
 from src.models.gemini import GeminiClient
-from src.notion.client import NotionClient
-from src.notion.setup import setup_databases
-from src.notion.databases import CampaignsDB, CompaniesDB, ContactsDB, EmailsDB
-from src.notion.databases_contact_campaigns import ContactCampaignsDB
+from src.db.connection import get_pool, close_pool
+from src.db.campaigns import CampaignsDB
+from src.db.companies import CompaniesDB
+from src.db.contacts import ContactsDB
+from src.db.emails import EmailsDB
+from src.db.contact_campaigns import ContactCampaignsDB
 from src.search.brave_search import BraveSearchClient
 from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
@@ -41,9 +43,7 @@ from src.layers.person_research import person_research_worker
 from src.layers.campaign_scoring import campaign_scoring_worker
 from src.layers.email_gen import email_gen_worker
 from src.email.sender import email_sender_worker
-from src.notion.dashboard import setup_dashboard
 from src.layers.dashboard_worker import dashboard_stats_worker
-from src.notion.leads_pages import refresh_leads_pages
 
 logger: logging.Logger | None = None
 
@@ -64,7 +64,7 @@ def _validate_config(config: Config) -> None:
     """Validate required config fields are set. Exits on failure."""
     required = {
         "GEMINI_API_KEY": config.gemini_api_key,
-        "NOTION_API_KEY": config.notion_api_key,
+        "DATABASE_URL": config.database_url,
     }
     missing = [name for name, value in required.items() if not value]
     if missing:
@@ -84,15 +84,13 @@ def _log_startup_summary(config: Config) -> None:
                 config.model_discovery, config.model_enrichment,
                 config.model_scoring, config.model_contact_extraction,
                 config.model_email_generation)
-    logger.info("Notion hub page: %s", config.notion_hub_page_id or "(not set)")
+    logger.info("Database: %s", config.database_url[:30] + "...")
     logger.info("SearXNG URL: %s", config.searxng_url)
     logger.info("SMTP configured: %s (host=%s port=%d)",
                 bool(config.smtp_host), config.smtp_host or "(none)", config.smtp_port)
     logger.info("Senders configured: %d (daily limit %d per sender)",
                 len(config.senders), config.email_daily_limit)
     logger.info("Enrichment stale threshold: %d days", config.enrichment_stale_days)
-    logger.info("Contact-Campaigns DB: %s", config.notion_contact_campaigns_db_id or "(auto)")
-    logger.info("Leads page: %s", config.notion_leads_page_id or "(auto)")
 
 
 async def supervised_worker(name: str, worker_fn, *args, **kwargs) -> None:
@@ -134,33 +132,6 @@ def _install_signal_handlers(loop: asyncio.AbstractEventLoop) -> None:
         loop.add_signal_handler(sig, _handle_signal, sig.name)
 
 
-_LEADS_REFRESH_INTERVAL = 300  # seconds between leads page refreshes
-
-
-async def _leads_refresh_loop(
-    notion_client: NotionClient,
-    contact_campaigns_db,
-    campaigns_db,
-    emails_db,
-    leads_page_id: str,
-) -> None:
-    """Periodically refresh the High Priority Leads pages."""
-    log = get_logger("leads_refresh")
-    log.info("Leads refresh loop started (interval=%ds)", _LEADS_REFRESH_INTERVAL)
-    while True:
-        if leads_page_id:
-            try:
-                await refresh_leads_pages(
-                    notion_client, contact_campaigns_db, campaigns_db, emails_db,
-                    leads_page_id,
-                )
-            except Exception as exc:
-                log.error("Leads refresh failed: %s", exc)
-        else:
-            log.warning("No leads_page_id configured, skipping refresh")
-        await asyncio.sleep(_LEADS_REFRESH_INTERVAL)
-
-
 async def main() -> None:
     """Main entry point. Initializes everything and launches workers."""
     global logger
@@ -172,12 +143,11 @@ async def main() -> None:
     _validate_config(config)
     _log_startup_summary(config)
 
-    # Rate limiter (shared across all clients)
+    # Rate limiter (shared across Gemini and search clients)
     rate_limiter = RateLimiter(DEFAULT_LIMITS)
 
     # Core clients
     gemini = GeminiClient(config, rate_limiter)
-    notion_client = NotionClient(rate_limiter=rate_limiter)
     if config.brave_search_api_key:
         search_client = BraveSearchClient(api_key=config.brave_search_api_key)
         logger.info("Using Brave Search API")
@@ -191,54 +161,24 @@ async def main() -> None:
     email_permutator = EmailPermutator()
     smtp_verifier = SMTPVerifier()
 
-    # Auto-create Notion databases if needed
-    db_ids = await setup_databases(client=notion_client)
-    logger.info("Notion databases ready: %s",
-                {k: v[:8] + "..." for k, v in db_ids.items() if v})
+    # Create asyncpg connection pool and DB instances
+    pool = await get_pool()
+    logger.info("Postgres connection pool ready")
 
-    # Build dashboard layout (runs once on startup)
-    try:
-        await setup_dashboard(notion_client, config)
-        logger.info("Dashboard layout initialized")
-    except Exception:
-        logger.exception("Dashboard setup failed, continuing without dashboard")
+    campaigns_db = CampaignsDB(pool)
+    companies_db = CompaniesDB(pool)
+    contacts_db = ContactsDB(pool)
+    emails_db = EmailsDB(pool)
+    contact_campaigns_db = ContactCampaignsDB(pool)
 
-    # Database wrappers (all pull their DB ID from config singleton)
-    campaigns_db = CampaignsDB(notion_client)
-    companies_db = CompaniesDB(notion_client)
-    contacts_db = ContactsDB(notion_client)
-    emails_db = EmailsDB(notion_client)
-    contact_campaigns_db = ContactCampaignsDB(
-        notion_client, config.notion_contact_campaigns_db_id,
-    )
-
-    # Override DB IDs if setup just created them (config may not have them)
-    if db_ids.get("campaigns"):
-        campaigns_db.db_id = db_ids["campaigns"]
-    if db_ids.get("companies"):
-        companies_db.db_id = db_ids["companies"]
-    if db_ids.get("contacts"):
-        contacts_db.db_id = db_ids["contacts"]
-    if db_ids.get("emails"):
-        emails_db.db_id = db_ids["emails"]
-    if db_ids.get("contact_campaigns"):
-        contact_campaigns_db.db_id = db_ids["contact_campaigns"]
-
-    # Contact-Campaigns junction DB
-    cc_db_id = db_ids.get("contact_campaigns") or config.notion_contact_campaigns_db_id
-    contact_campaigns_db = ContactCampaignsDB(client=notion_client, db_id=cc_db_id)
-
-    # Leads page ID (for refresh_leads_pages worker)
-    leads_page_id = db_ids.get("leads_page") or config.notion_leads_page_id
-
-    # Build per-worker notion client aggregates
-    discovery_notion = DiscoveryNotionClients(
+    # Build per-worker DB client aggregates
+    discovery_dbs = DiscoveryNotionClients(
         campaigns=campaigns_db, companies=companies_db
     )
-    people_notion = PeopleNotionClients(
+    people_dbs = PeopleNotionClients(
         companies=companies_db, contacts=contacts_db
     )
-    sender_notion = SimpleNamespace(
+    sender_dbs = SimpleNamespace(
         emails=emails_db,
         contacts=contacts_db,
         contact_campaigns=contact_campaigns_db,
@@ -250,27 +190,22 @@ async def main() -> None:
 
     workers = [
         ("discovery", discovery_worker,
-         [config, gemini, discovery_notion, search_client]),
+         [config, gemini, discovery_dbs, search_client]),
         ("enrichment", enrichment_worker,
-         [config, gemini, notion_client, companies_db, campaigns_db, scraper,
+         [config, gemini, companies_db, campaigns_db, scraper,
           search_client]),
         ("people", people_worker,
-         [config, gemini, people_notion, contact_finder, email_permutator, smtp_verifier]),
+         [config, gemini, people_dbs, contact_finder, email_permutator,
+          smtp_verifier]),
         ("person_research", person_research_worker,
-         [config, gemini, notion_client, contacts_db]),
+         [config, gemini, contacts_db, companies_db]),
         ("campaign_scoring", campaign_scoring_worker,
-         [config, gemini, notion_client, contacts_db, companies_db, campaigns_db,
+         [config, gemini, contacts_db, companies_db, campaigns_db,
           contact_campaigns_db]),
         ("email_gen", email_gen_worker,
-         [config, gemini, notion_client, contacts_db, campaigns_db, emails_db,
-          contact_campaigns_db]),
-        ("email_sender", email_sender_worker, [config, sender_notion]),
-        ("leads_refresh", _leads_refresh_loop,
-         [notion_client, contact_campaigns_db, campaigns_db, emails_db,
-          leads_page_id]),
-        ("dashboard_stats", dashboard_stats_worker,
-         [notion_client, campaigns_db, companies_db, contacts_db, emails_db,
-          contact_campaigns_db]),
+         [config, gemini, campaigns_db, companies_db, contacts_db,
+          emails_db, contact_campaigns_db]),
+        ("email_sender", email_sender_worker, [config, sender_dbs]),
     ]
     logger.info("Launching %d workers", len(workers))
 
@@ -281,6 +216,8 @@ async def main() -> None:
     except asyncio.CancelledError:
         pass
 
+    # Cleanup
+    await close_pool()
     logger.info("--- Avelero Clay Enrichment stopped ---")
 
 

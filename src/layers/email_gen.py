@@ -2,6 +2,7 @@
 Layer 4: Email generation worker.
 
 Generates personalized cold emails for high-priority contacts via Gemini.
+Uses Postgres DB modules (src.db) for all data access.
 """
 
 from __future__ import annotations
@@ -10,15 +11,12 @@ import asyncio
 import json
 import logging
 
-from src.notion.prop_helpers import (
-    extract_title,
-    extract_rich_text,
-    extract_relation_ids,
-    select_prop,
-)
+from src.db.campaigns import CampaignsDB
+from src.db.companies import CompaniesDB
+from src.db.contacts import ContactsDB
+from src.db.emails import EmailsDB
+from src.db.contact_campaigns import ContactCampaignsDB
 from src.layers.email_context import (
-    blocks_to_text,
-    text_to_body_blocks,
     build_contact_context,
     build_company_context,
     group_junction_entries_by_company,
@@ -30,87 +28,71 @@ logger = logging.getLogger(__name__)
 _CYCLE_INTERVAL = 240  # seconds between worker cycles
 
 
-async def _load_campaign_target(campaigns_db, campaign_id: str) -> str:
+async def _load_campaign_target(campaigns_db: CampaignsDB, campaign_id: str) -> str:
     """Load the target description for a campaign by page ID."""
-    campaign_pages = await campaigns_db._client.query_database(
-        campaigns_db.db_id,
-        filter_obj={"property": "Name", "title": {"is_not_empty": True}},
-    )
-    for cp in campaign_pages:
-        if cp["id"] == campaign_id:
-            return extract_rich_text(cp, "Target Description")
+    campaigns = await campaigns_db.get_processable_campaigns()
+    for cp in campaigns:
+        if str(cp["id"]) == str(campaign_id):
+            return cp.get("target_description", "")
     return ""
 
 
 async def generate_emails_for_company(
-    company_page: dict,
+    company: dict,
     junction_entries: list[dict],
     config,
     gemini_client,
-    notion_client,
-    campaigns_db,
-    contacts_db,
-    emails_db,
-    contact_campaigns_db,
+    campaigns_db: CampaignsDB,
+    companies_db: CompaniesDB,
+    contacts_db: ContactsDB,
+    emails_db: EmailsDB,
+    contact_campaigns_db: ContactCampaignsDB,
     campaign_id: str,
     campaign_target: str,
-):
-    """Generate emails for junction entries at one company.
+) -> None:
+    """Generate emails for junction entries at one company."""
+    company_id = str(company["id"])
+    company_name = company.get("name", "")
 
-    Loads company enrichment data and per-contact person research,
-    calls Gemini with enhanced context, then creates email records
-    and updates junction + contact statuses.
-
-    Args:
-        company_page: The Notion company page object.
-        junction_entries: Junction entries for contacts at this company.
-        config: Application config object.
-        gemini_client: GeminiClient instance.
-        notion_client: NotionClient for raw API calls.
-        campaigns_db: CampaignsDB instance.
-        contacts_db: ContactsDB instance.
-        emails_db: EmailsDB instance.
-        contact_campaigns_db: ContactCampaignsDB instance.
-        campaign_id: The campaign page ID.
-        campaign_target: Campaign target description text.
-    """
-    company_id = company_page["id"]
-    company_name = extract_title(company_page, "Name")
-
-    # Load company page body for enrichment context
-    company_blocks = await notion_client.get_page_body(company_id)
-    company_body = blocks_to_text(company_blocks)
-    company_context = build_company_context(company_page, company_body)
+    # Load company body text for enrichment context
+    company_body = await companies_db.get_body(company_id)
+    company_context = build_company_context(company, company_body)
 
     # Build per-contact context from junction entries
-    contact_contexts = []
-    personalized_contexts = []
-    entry_meta = []  # (junction_entry, contact_id, contact_name)
+    contact_contexts: list[str] = []
+    personalized_contexts: list[str] = []
+    entry_meta: list[tuple[dict, str, str]] = []
 
     for entry in junction_entries:
-        contact_ids = extract_relation_ids(entry, "Contact")
-        if not contact_ids:
+        contact_id = entry.get("contact_id")
+        if not contact_id:
             logger.warning(
-                "Junction entry %s has no contact relation", entry["id"]
+                "Junction entry %s has no contact_id", entry["id"]
             )
             continue
 
-        contact_id = contact_ids[0]
-        contact_page = await notion_client._call(
-            notion_client._sdk.pages.retrieve, page_id=contact_id,
-        )
+        contact_id = str(contact_id)
 
-        # Load contact page body (contains person research)
-        contact_blocks = await notion_client.get_page_body(contact_id)
-        contact_body = blocks_to_text(contact_blocks)
-        ctx = build_contact_context(contact_page, contact_body)
+        # Fetch contact row
+        contact_row = await contacts_db._pool.fetchrow(
+            "SELECT * FROM contacts WHERE id = $1",
+            entry["contact_id"],
+        )
+        if not contact_row:
+            logger.warning("Contact %s not found", contact_id)
+            continue
+        contact = dict(contact_row)
+
+        # Load contact body (contains person research)
+        contact_body = await contacts_db.get_body(contact_id)
+        ctx = build_contact_context(contact, contact_body)
         contact_contexts.append(ctx)
 
         # Get personalized context from junction record
-        pc = extract_rich_text(entry, "Personalized Context")
+        pc = entry.get("personalized_context", "") or ""
         personalized_contexts.append(pc)
 
-        contact_name = extract_title(contact_page, "Name")
+        contact_name = contact.get("name", "")
         entry_meta.append((entry, contact_id, contact_name))
 
     if not entry_meta:
@@ -176,17 +158,16 @@ async def generate_emails_for_company(
             result["input_tokens"], result["output_tokens"],
         )
 
-        junction_id = junction_entry["id"]
+        junction_id = str(junction_entry["id"])
         subject = email_data.get("subject", f"Outreach to {contact_name}")
         body = email_data.get("body", "")
-        body_blocks = text_to_body_blocks(body)
 
-        # Create email record in Emails DB
+        # Create email record in Emails DB (body stored as TEXT)
         await emails_db.create_email(
             subject=subject,
             contact_id=contact_id,
             campaign_id=campaign_id,
-            body_blocks=body_blocks,
+            body=body,
         )
 
         # Update junction record with email subject and outreach status
@@ -197,7 +178,7 @@ async def generate_emails_for_company(
 
         # Update contact status
         await contacts_db.update_contact(
-            contact_id, {"Status": select_prop("Email Generated")}
+            contact_id, status="Email Generated"
         )
 
         logger.info(
@@ -209,24 +190,24 @@ async def generate_emails_for_company(
 async def email_gen_worker(
     config,
     gemini_client,
-    notion_client,
-    contacts_db,
-    campaigns_db,
-    emails_db,
-    contact_campaigns_db,
-):
+    campaigns_db: CampaignsDB,
+    companies_db: CompaniesDB,
+    contacts_db: ContactsDB,
+    emails_db: EmailsDB,
+    contact_campaigns_db: ContactCampaignsDB,
+) -> None:
     """Continuous worker that generates emails for high-priority contacts.
 
-    Polls the junction table for entries with score >=8 and no email
+    Polls the junction table for entries with score >=7 and no email
     subject yet. Groups by company and generates personalized emails
     using person research context.
 
     Args:
         config: Application config object.
         gemini_client: GeminiClient instance.
-        notion_client: NotionClient for raw API calls (page body reads).
-        contacts_db: ContactsDB instance.
         campaigns_db: CampaignsDB instance.
+        companies_db: CompaniesDB instance.
+        contacts_db: ContactsDB instance.
         emails_db: EmailsDB instance.
         contact_campaigns_db: ContactCampaignsDB instance.
     """
@@ -242,8 +223,8 @@ async def email_gen_worker(
                 continue
 
             for campaign in active_campaigns:
-                campaign_id = campaign["id"]
-                campaign_name = extract_title(campaign, "Name")
+                campaign_id = str(campaign["id"])
+                campaign_name = campaign.get("name", "")
 
                 # Query junction table for high-priority entries
                 entries = await contact_campaigns_db.get_high_priority(
@@ -271,17 +252,24 @@ async def email_gen_worker(
                 by_company = group_junction_entries_by_company(pending)
                 for company_id, company_entries in by_company.items():
                     try:
-                        company_page = await notion_client._call(
-                            notion_client._sdk.pages.retrieve,
-                            page_id=company_id,
+                        company_row = await companies_db._pool.fetchrow(
+                            "SELECT * FROM companies WHERE id = $1",
+                            company_entries[0]["company_id"],
                         )
+                        if not company_row:
+                            logger.warning(
+                                "Company %s not found", company_id[:8]
+                            )
+                            continue
+                        company = dict(company_row)
+
                         await generate_emails_for_company(
-                            company_page=company_page,
+                            company=company,
                             junction_entries=company_entries,
                             config=config,
                             gemini_client=gemini_client,
-                            notion_client=notion_client,
                             campaigns_db=campaigns_db,
+                            companies_db=companies_db,
                             contacts_db=contacts_db,
                             emails_db=emails_db,
                             contact_campaigns_db=contact_campaigns_db,
