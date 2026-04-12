@@ -79,7 +79,7 @@ async function getDashboardData() {
     contacts: contactsCount[0].count as number,
     highPriorityLeads: highPriorityLeads[0].count as number,
     emailsSent: emailsSent[0].count as number,
-    campaignRows: campaignRows as Array<{
+    campaignRows: campaignRows as unknown as Array<{
       id: string;
       name: string;
       status: string;
@@ -87,7 +87,7 @@ async function getDashboardData() {
       leads: number;
       emails: number;
     }>,
-    recentCompanies: recentCompanies as Array<{
+    recentCompanies: recentCompanies as unknown as Array<{
       id: string;
       name: string;
       status: string;
