@@ -83,6 +83,14 @@ class CompaniesDB:
         )
         return [dict(r) for r in rows]
 
+    async def get_campaign_ids(self, company_id: str) -> list[str]:
+        """Fetch campaign UUIDs linked to a company via company_campaigns."""
+        rows = await self._pool.fetch(
+            "SELECT campaign_id FROM company_campaigns WHERE company_id = $1",
+            UUID(company_id),
+        )
+        return [str(r["campaign_id"]) for r in rows]
+
     # ------------------------------------------------------------------
     # Create (with dedup + campaign linking)
     # ------------------------------------------------------------------

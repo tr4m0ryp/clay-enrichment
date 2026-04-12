@@ -1,7 +1,7 @@
 """
 SMTP email sending engine with safety rails.
 
-Polls Notion for approved emails, sends via SMTP with round-robin
+Polls Postgres for approved emails, sends via SMTP with round-robin
 sender rotation, randomized delays, daily per-sender limits, business
 hours enforcement, and automatic fail-rate hard stop.
 
@@ -11,24 +11,17 @@ Re-exports SenderPool and helpers from pool.py for external callers.
 import asyncio
 import logging
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from typing import Any
 
 from src.config import Config, SenderAccount
+from src.db.contacts import ContactsDB
+from src.db.emails import EmailsDB
 from src.email.pool import (
     SenderPool,
     is_business_hours,
     compute_delay,
-    blocks_to_plain_text,
-)
-from src.notion.prop_helpers import (
-    extract_title,
-    extract_relation_ids,
-    extract_email,
-    extract_select,
-    rich_text_prop,
-    select_prop,
-    date_prop,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,7 +34,6 @@ __all__ = [
     "SenderPool",
     "is_business_hours",
     "compute_delay",
-    "blocks_to_plain_text",
     "send_batch",
     "email_sender_worker",
 ]
@@ -65,58 +57,61 @@ def _send_smtp(
 
 
 async def _get_recipient_email(
-    email_page: dict, notion_clients: Any
+    email_row: dict, db_clients: Any
 ) -> str:
-    """Extract recipient email from the Contact linked to an email page."""
-    contact_ids = extract_relation_ids(email_page, "Contact")
-    if not contact_ids:
+    """Extract recipient email from the Contact linked to an email row."""
+    contact_id = email_row.get("contact_id")
+    if not contact_id:
         return ""
 
-    contact_id = contact_ids[0]
-    client = notion_clients.contacts._client
-    page = await client._call(
-        client._sdk.pages.retrieve, page_id=contact_id
+    contacts_db: ContactsDB = db_clients.contacts
+    row = await contacts_db._pool.fetchrow(
+        "SELECT email FROM contacts WHERE id = $1", contact_id
     )
-    return extract_email(page, "Email")
+    if row is None:
+        return ""
+    return row["email"] or ""
 
 
 async def _is_campaign_active(
-    email_page: dict, notion_clients: Any
+    email_row: dict, db_clients: Any
 ) -> bool:
-    """Return True only if the email's campaign has Status=Active."""
-    campaign_ids = extract_relation_ids(email_page, "Campaign")
-    if not campaign_ids:
+    """Return True only if the email's campaign has status=Active."""
+    campaign_id = email_row.get("campaign_id")
+    if not campaign_id:
         logger.warning("Email %s has no campaign relation, blocking send",
-                        email_page["id"])
+                        email_row["id"])
         return False
-    campaigns_db = getattr(notion_clients, "campaigns", None)
+    campaigns_db = getattr(db_clients, "campaigns", None)
     if campaigns_db is None:
         return True  # cannot verify -- allow for backward compatibility
     try:
-        client = campaigns_db._client
-        page = await client._call(
-            client._sdk.pages.retrieve, page_id=campaign_ids[0])
-        return extract_select(page, "Status") == "Active"
+        row = await campaigns_db._pool.fetchrow(
+            "SELECT status FROM campaigns WHERE id = $1", campaign_id
+        )
+        if row is None:
+            return False
+        return row["status"] == "Active"
     except Exception as exc:
         logger.warning("Campaign status check failed for email %s: %s",
-                        email_page["id"], exc)
+                        email_row["id"], exc)
         return False  # fail closed
 
 
 async def _update_junction_status(
-    email_page: dict, status: str, notion_clients: Any
+    email_row: dict, status: str, db_clients: Any
 ) -> None:
     """Update the junction table outreach status for an email's contact+campaign."""
-    cc_db = getattr(notion_clients, "contact_campaigns", None)
+    cc_db = getattr(db_clients, "contact_campaigns", None)
     if cc_db is None:
         return
-    contact_ids = extract_relation_ids(email_page, "Contact")
-    campaign_ids = extract_relation_ids(email_page, "Campaign")
-    if not contact_ids or not campaign_ids:
+    contact_id = email_row.get("contact_id")
+    campaign_id = email_row.get("campaign_id")
+    if not contact_id or not campaign_id:
         return
     try:
         entry = await cc_db.find_by_contact_campaign(
-            contact_ids[0], campaign_ids[0]
+            str(contact_id), str(campaign_id)
         )
         if entry:
             await cc_db.update_outreach_status(entry["id"], status)
@@ -125,18 +120,18 @@ async def _update_junction_status(
 
 
 async def _send_one(
-    email_page: dict, sender_pool: SenderPool,
-    config: Config, notion_clients: Any,
+    email_row: dict, sender_pool: SenderPool,
+    config: Config, db_clients: Any,
 ) -> bool | None:
     """Send one email. Returns True/False/None (skipped)."""
-    page_id = email_page["id"]
-    subject = extract_title(email_page, "Subject")
+    email_id = str(email_row["id"])
+    subject = email_row["subject"]
 
     # Only send emails for Active campaigns
-    if not await _is_campaign_active(email_page, notion_clients):
+    if not await _is_campaign_active(email_row, db_clients):
         logger.info(
-            "Skipping email '%s' (page %s): campaign is not Active",
-            subject, page_id,
+            "Skipping email '%s' (id %s): campaign is not Active",
+            subject, email_id,
         )
         return None
 
@@ -147,15 +142,14 @@ async def _send_one(
         )
         return None
 
-    recipient = await _get_recipient_email(email_page, notion_clients)
+    recipient = await _get_recipient_email(email_row, db_clients)
     if not recipient:
         logger.warning(
-            "No recipient email found for page %s, skipping.", page_id
+            "No recipient email found for email %s, skipping.", email_id
         )
         return None
 
-    body_blocks = await notion_clients.emails._client.get_page_body(page_id)
-    body_text = blocks_to_plain_text(body_blocks)
+    body_text = email_row.get("body") or ""
 
     try:
         await asyncio.to_thread(
@@ -168,40 +162,41 @@ async def _send_one(
             body_text,
         )
         sender_pool.record_send(sender.email)
-        await notion_clients.emails._client.update_page(
-            page_id,
-            {
-                "Status": select_prop("Sent"),
-                "Sender Address": rich_text_prop(sender.email),
-                "Sent At": date_prop(),
-            },
+
+        emails_db: EmailsDB = db_clients.emails
+        await emails_db.update_status(email_id, "Sent")
+        # Store the sender address used
+        await emails_db._pool.execute(
+            "UPDATE emails SET sender_address = $1 WHERE id = $2",
+            sender.email,
+            email_row["id"],
         )
-        await _update_junction_status(email_page, "Sent", notion_clients)
+
+        await _update_junction_status(email_row, "Sent", db_clients)
         logger.info("Sent '%s' to %s via %s", subject, recipient, sender.email)
         return True
 
     except Exception as exc:
-        logger.error("Failed to send '%s' (page %s): %s", subject, page_id, exc)
+        logger.error("Failed to send '%s' (id %s): %s", subject, email_id, exc)
         try:
-            await notion_clients.emails._client.update_page(
-                page_id, {"Status": select_prop("Failed")}
-            )
+            emails_db: EmailsDB = db_clients.emails
+            await emails_db.update_status(email_id, "Failed")
         except Exception as update_exc:
             logger.error(
-                "Failed to update status for page %s: %s", page_id, update_exc
+                "Failed to update status for email %s: %s", email_id, update_exc
             )
         return False
 
 
 async def send_batch(
     approved: list[dict], sender_pool: SenderPool,
-    config: Config, notion_clients: Any,
+    config: Config, db_clients: Any,
 ) -> None:
     """Send approved emails with rotation, delays, and fail-rate safety."""
     total = 0
     failures = 0
 
-    for idx, email_page in enumerate(approved):
+    for idx, email_row in enumerate(approved):
         if total > 0 and (failures / total) >= _FAIL_RATE_THRESHOLD:
             logger.error(
                 "Fail rate %.0f%% reached threshold (%.0f%%). "
@@ -213,7 +208,7 @@ async def send_batch(
             )
             return
 
-        result = await _send_one(email_page, sender_pool, config, notion_clients)
+        result = await _send_one(email_row, sender_pool, config, db_clients)
         if result is None and sender_pool.next_sender() is None:
             logger.warning("All senders exhausted. Stopping batch after %d.", total)
             return
@@ -229,7 +224,7 @@ async def send_batch(
             await asyncio.sleep(delay)
 
 
-async def email_sender_worker(config: Config, notion_clients: Any) -> None:
+async def email_sender_worker(config: Config, db_clients: Any) -> None:
     """Main worker loop: polls for approved emails and sends with rotation."""
     sender_pool = SenderPool(config.senders, config.email_daily_limit)
 
@@ -245,13 +240,14 @@ async def email_sender_worker(config: Config, notion_clients: Any) -> None:
             continue
 
         try:
-            approved = await notion_clients.emails.get_approved_emails()
+            emails_db: EmailsDB = db_clients.emails
+            approved = await emails_db.get_approved_emails()
         except Exception as exc:
             logger.error("Failed to fetch approved emails: %s", exc)
             await asyncio.sleep(60)
             continue
 
         if approved:
-            await send_batch(approved, sender_pool, config, notion_clients)
+            await send_batch(approved, sender_pool, config, db_clients)
 
         await asyncio.sleep(60)
