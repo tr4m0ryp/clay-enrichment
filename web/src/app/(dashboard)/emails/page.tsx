@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { sql } from "@/lib/db";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,7 @@ interface EmailRow {
   contact_name: string | null;
   company_name: string | null;
   contact_email: string | null;
+  contact_id: string | null;
   created_at: string;
 }
 
@@ -33,6 +35,7 @@ async function getEmailsWithContacts(status?: string): Promise<EmailRow[]> {
         e.body,
         e.status,
         e.created_at,
+        e.contact_id,
         ct.name   AS contact_name,
         ct.email  AS contact_email,
         co.name   AS company_name
@@ -50,6 +53,7 @@ async function getEmailsWithContacts(status?: string): Promise<EmailRow[]> {
       e.body,
       e.status,
       e.created_at,
+      e.contact_id,
       ct.name   AS contact_name,
       ct.email  AS contact_email,
       co.name   AS company_name
@@ -87,35 +91,37 @@ export default async function EmailsPage({
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {emails.map((email) => (
-            <Card key={email.id}>
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <CardTitle className="truncate text-sm">
-                      {email.contact_name ?? "Unknown Contact"}
-                    </CardTitle>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {email.company_name ?? "No company"}
-                      {email.contact_email ? ` -- ${email.contact_email}` : ""}
-                    </p>
+            <Link key={email.id} href={`/emails/${email.id}`} className="block">
+              <Card className="cursor-pointer transition-shadow hover:shadow-md">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="truncate text-sm">
+                        {email.contact_name ?? "Unknown Contact"}
+                      </CardTitle>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {email.company_name ?? "No company"}
+                        {email.contact_email ? ` -- ${email.contact_email}` : ""}
+                      </p>
+                    </div>
+                    <Badge variant={STATUS_BADGE[email.status as EmailStatus] ?? "default"}>
+                      {email.status}
+                    </Badge>
                   </div>
-                  <Badge variant={STATUS_BADGE[email.status as EmailStatus] ?? "default"}>
-                    {email.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="mb-2 text-sm font-medium text-foreground">
-                  {email.subject}
-                </p>
-                <p className="line-clamp-4 text-xs leading-relaxed text-muted-foreground">
-                  {email.body}
-                </p>
-                {email.status === "Pending Review" && (
-                  <EmailActions emailId={email.id} />
-                )}
-              </CardContent>
-            </Card>
+                </CardHeader>
+                <CardContent>
+                  <p className="mb-2 text-sm font-medium text-foreground">
+                    {email.subject}
+                  </p>
+                  <p className="line-clamp-4 text-xs leading-relaxed text-muted-foreground">
+                    {email.body}
+                  </p>
+                  {email.status === "Pending Review" && (
+                    <EmailActions emailId={email.id} />
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
           ))}
         </div>
       )}
