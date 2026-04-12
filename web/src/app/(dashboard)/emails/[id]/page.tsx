@@ -26,6 +26,7 @@ interface EmailDetail {
   contact_email: string | null;
   contact_job_title: string | null;
   company_name: string | null;
+  company_website: string | null;
 }
 
 async function getEmailDetail(id: string): Promise<EmailDetail | null> {
@@ -40,7 +41,8 @@ async function getEmailDetail(id: string): Promise<EmailDetail | null> {
       ct.name       AS contact_name,
       ct.email      AS contact_email,
       ct.job_title  AS contact_job_title,
-      co.name       AS company_name
+      co.name       AS company_name,
+      co.website    AS company_website
     FROM emails e
     LEFT JOIN contacts ct ON ct.id = e.contact_id
     LEFT JOIN companies co ON co.id = ct.company_id
@@ -128,6 +130,23 @@ export default async function EmailDetailPage({
               <dt className="text-xs text-muted-foreground">Email</dt>
               <dd className="mt-0.5 text-sm">
                 {email.contact_email ?? "--"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted-foreground">Website</dt>
+              <dd className="mt-0.5 text-sm">
+                {email.company_website ? (
+                  <a
+                    href={email.company_website}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    {email.company_website.replace(/^https?:\/\//, "")}
+                  </a>
+                ) : (
+                  "--"
+                )}
               </dd>
             </div>
           </dl>
