@@ -30,6 +30,7 @@ class GeminiClient:
         model: str = None,
         json_mode: bool = False,
         temperature: float = 0.1,
+        grounding: bool = False,
     ) -> dict:
         """
         Call the Gemini API and return text plus token counts.
@@ -44,7 +45,11 @@ class GeminiClient:
             "temperature": temperature,
             "system_instruction": prompt,
         }
-        if json_mode:
+        if grounding:
+            config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
+            if json_mode:
+                logger.warning("Grounding enabled -- ignoring json_mode (incompatible)")
+        elif json_mode:
             config_kwargs["response_mime_type"] = "application/json"
 
         gen_config = types.GenerateContentConfig(**config_kwargs)

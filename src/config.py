@@ -21,6 +21,7 @@ class Config:
     model_scoring: str = "gemini-2.5-flash-lite"
     model_contact_extraction: str = "gemini-2.5-flash-lite"
     model_email_generation: str = "gemini-2.5-flash"
+    model_research: str = "gemini-2.5-flash"
 
     # Google Search (legacy, deprecated)
     google_api_key: str = ""
@@ -77,6 +78,7 @@ def _load_config() -> Config:
         model_scoring=os.environ.get("MODEL_SCORING", "gemini-2.5-flash-lite").strip(),
         model_contact_extraction=os.environ.get("MODEL_CONTACT_EXTRACTION", "gemini-2.5-flash-lite").strip(),
         model_email_generation=os.environ.get("MODEL_EMAIL_GENERATION", "gemini-2.5-flash").strip(),
+        model_research=os.environ.get("MODEL_RESEARCH", "gemini-2.5-flash").strip(),
         google_api_key=os.environ.get("GOOGLE_API_KEY", "").strip(),
         google_cse_id=os.environ.get("GOOGLE_CSE_ID", "").strip(),
         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888").strip(),
