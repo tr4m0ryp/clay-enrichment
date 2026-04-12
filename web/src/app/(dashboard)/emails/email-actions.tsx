@@ -1,9 +1,23 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { approveEmail, rejectEmail } from "./actions";
+import {
+  approveEmail,
+  rejectEmail,
+  approveEmailAndNext,
+  rejectEmailAndNext,
+} from "./actions";
 
-export function EmailActions({ emailId }: { emailId: string }) {
+export function EmailActions({
+  emailId,
+  navigateToNext,
+}: {
+  emailId: string;
+  navigateToNext?: boolean;
+}) {
+  const approve = navigateToNext ? approveEmailAndNext : approveEmail;
+  const reject = navigateToNext ? rejectEmailAndNext : rejectEmail;
+
   return (
     <div
       className="mt-4 flex gap-2"
@@ -14,7 +28,7 @@ export function EmailActions({ emailId }: { emailId: string }) {
         size="sm"
         onClick={(e) => {
           e.preventDefault();
-          approveEmail(emailId);
+          approve(emailId);
         }}
       >
         Approve
@@ -24,7 +38,7 @@ export function EmailActions({ emailId }: { emailId: string }) {
         size="sm"
         onClick={(e) => {
           e.preventDefault();
-          rejectEmail(emailId);
+          reject(emailId);
         }}
       >
         Reject

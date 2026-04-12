@@ -160,7 +160,7 @@ export default async function EmailDetailPage({
       />
 
       {email.status === "Pending Review" && (
-        <EmailActions emailId={email.id} />
+        <EmailActions emailId={email.id} navigateToNext />
       )}
     </div>
   );
