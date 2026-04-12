@@ -96,10 +96,10 @@ export default async function CampaignDetailPage({
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard label="Companies" value={stats.companies} href={`/companies?campaign=${id}`} />
-        <StatCard label="Contacts" value={stats.contacts} href={`/contacts?campaign=${id}`} />
-        <StatCard label="High-Priority Leads" value={stats.highPriorityLeads} href={`/leads?campaign=${id}`} />
-        <StatCard label="Emails" value={stats.emails} href={`/emails?campaign=${id}`} />
+        <StatCard label="Companies" value={stats.companies} href={`/campaigns/${id}/companies`} />
+        <StatCard label="Contacts" value={stats.contacts} href={`/campaigns/${id}/contacts`} />
+        <StatCard label="High-Priority Leads" value={stats.highPriorityLeads} href={`/campaigns/${id}/leads`} />
+        <StatCard label="Emails" value={stats.emails} href={`/campaigns/${id}/emails`} />
       </div>
 
       {/* Target description */}
