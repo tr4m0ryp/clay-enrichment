@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   Table,
   TableHeader,
@@ -66,7 +67,14 @@ export function CampaignSummary({ rows }: { rows: CampaignRow[] }) {
           <TableBody>
             {rows.map((row) => (
               <TableRow key={row.id}>
-                <TableCell className="font-medium">{row.name}</TableCell>
+                <TableCell className="font-medium">
+                  <Link
+                    href={`/campaigns/${row.id}`}
+                    className="text-foreground hover:text-primary underline-offset-4 hover:underline"
+                  >
+                    {row.name}
+                  </Link>
+                </TableCell>
                 <TableCell>
                   <Badge variant={statusVariant(row.status)}>
                     {row.status}
