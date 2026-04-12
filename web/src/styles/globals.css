@@ -44,6 +44,50 @@
   }
 }
 
+/* Sidebar collapse — driven by .sidebar-collapsed on <html> */
+.sidebar {
+  width: 240px;
+}
+
+.sidebar-content {
+  margin-left: 240px;
+}
+
+.sidebar-collapsed .sidebar {
+  width: 56px;
+}
+
+.sidebar-collapsed .sidebar .sidebar-label {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar .sidebar-header {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar-collapsed .sidebar .sidebar-nav {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.sidebar-collapsed .sidebar .sidebar-footer {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.sidebar-collapsed .sidebar .sidebar-navlink {
+  justify-content: center;
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 0;
+}
+
+.sidebar-collapsed .sidebar-content {
+  margin-left: 56px;
+}
+
 @layer utilities {
   .button-3d-default {
     box-shadow: inset 0.8px -0.8px 0 1px hsl(240 80% 4% / 5%),
