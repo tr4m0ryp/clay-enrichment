@@ -36,7 +36,7 @@ export default async function CampaignLeadsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const leads = (await getLeadsByCampaign(id)) as LeadRow[];
+  const leads = (await getLeadsByCampaign(id)) as unknown as LeadRow[];
 
   return (
     <div>
