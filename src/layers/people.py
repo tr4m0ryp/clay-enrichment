@@ -2,7 +2,7 @@
 
 Continuously picks up companies with status "Enriched", discovers
 contacts via SearXNG search, generates and verifies email addresses,
-and creates contact records in Notion.
+and creates contact records in Postgres.
 """
 
 from __future__ import annotations
@@ -12,6 +12,8 @@ import json
 import logging
 from dataclasses import dataclass
 
+from src.db.companies import CompaniesDB
+from src.db.contacts import ContactsDB
 from src.discovery.contact_finder import ContactFinder
 from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier
@@ -21,15 +23,6 @@ from src.layers.people_helpers import (
     verify_email_waterfall,
 )
 from src.models.gemini import GeminiClient
-from src.notion.databases_companies import CompaniesDB
-from src.notion.databases_contacts import ContactsDB
-from src.notion.prop_helpers import (
-    extract_number,
-    extract_title,
-    extract_url,
-    extract_relation_ids,
-    select_prop,
-)
 from src.prompts.people import PARSE_CONTACT_RESULTS
 
 logger = logging.getLogger(__name__)
@@ -39,8 +32,8 @@ _CYCLE_INTERVAL = 180  # seconds between worker cycles
 
 
 @dataclass
-class NotionClients:
-    """Aggregate accessor for typed Notion database clients."""
+class DBClients:
+    """Aggregate accessor for typed Postgres database clients."""
 
     companies: CompaniesDB
     contacts: ContactsDB
@@ -104,7 +97,7 @@ async def _is_duplicate_contact(
     existing = await contacts_db.get_contacts_for_company(company_id)
     name_lower = name.lower().strip()
     for contact in existing:
-        existing_name = extract_title(contact, "Name").lower().strip()
+        existing_name = (contact.get("name") or "").lower().strip()
         if existing_name == name_lower:
             return True
     return False
@@ -113,7 +106,7 @@ async def _is_duplicate_contact(
 async def discover_contacts_for_company(
     company: dict,
     gemini_client: GeminiClient,
-    notion_clients: NotionClients,
+    db_clients: DBClients,
     contact_finder: ContactFinder,
     email_permutator: EmailPermutator,
     smtp_verifier: SMTPVerifier,
@@ -121,13 +114,13 @@ async def discover_contacts_for_company(
     """Discover and create contacts for a single company.
 
     Full pipeline: search, parse, dedup, email permutation, SMTP
-    verification, and Notion contact creation. Returns count created.
+    verification, and contact creation. Returns count created.
     """
-    company_id = company["id"]
-    company_name = extract_title(company, "Name")
-    website = extract_url(company, "Website")
+    company_id = str(company["id"])
+    company_name = company["name"]
+    website = company.get("website") or ""
     domain = extract_domain(website)
-    campaign_ids = extract_relation_ids(company, "Campaign")
+    campaign_ids = await db_clients.companies.get_campaign_ids(company_id)
     campaign_id = campaign_ids[0] if campaign_ids else ""
 
     if not company_name:
@@ -152,8 +145,8 @@ async def discover_contacts_for_company(
 
     if not parsed_contacts:
         logger.info("No contacts found for '%s'", company_name)
-        await notion_clients.companies.update_company(
-            company_id, {"Status": select_prop("Contacts Found")}
+        await db_clients.companies.update_company(
+            company_id, {"status": "Contacts Found"}
         )
         return 0
 
@@ -169,7 +162,7 @@ async def discover_contacts_for_company(
         try:
             # Dedup check
             if await _is_duplicate_contact(
-                notion_clients.contacts, name, company_id
+                db_clients.contacts, name, company_id
             ):
                 logger.info("Skipping duplicate contact: %s at %s", name, company_name)
                 continue
@@ -193,8 +186,8 @@ async def discover_contacts_for_company(
             if email_verified:
                 verified_count += 1
 
-            # Create contact in Notion
-            result = await notion_clients.contacts.create_contact(
+            # Create contact in database
+            result = await db_clients.contacts.create_contact(
                 name=name,
                 company_id=company_id,
                 campaign_id=campaign_id,
@@ -219,8 +212,8 @@ async def discover_contacts_for_company(
             continue
 
     # Step 4: Update company status
-    await notion_clients.companies.update_company(
-        company_id, {"Status": select_prop("Contacts Found")}
+    await db_clients.companies.update_company(
+        company_id, {"status": "Contacts Found"}
     )
 
     logger.info(
@@ -233,7 +226,7 @@ async def discover_contacts_for_company(
 async def people_worker(
     config,
     gemini_client: GeminiClient,
-    notion_clients: NotionClients,
+    db_clients: DBClients,
     contact_finder: ContactFinder,
     email_permutator: EmailPermutator,
     smtp_verifier: SMTPVerifier,
@@ -242,16 +235,16 @@ async def people_worker(
     logger.info("People worker started")
     while True:
         try:
-            companies = await notion_clients.companies.get_companies_by_status(
+            companies = await db_clients.companies.get_companies_by_status(
                 "Enriched"
             )
             logger.info("People worker: found %d enriched companies", len(companies))
 
             for company in companies:
                 # Gate: skip companies below DPP fit score threshold
-                dpp_score = extract_number(company, "DPP Fit Score")
+                dpp_score = company.get("dpp_fit_score")
                 if not dpp_score or dpp_score < MIN_DPP_FIT_SCORE:
-                    company_name = extract_title(company, "Name")
+                    company_name = company["name"]
                     logger.info(
                         "People worker: skipping '%s' (DPP Fit Score=%s, min=%d)",
                         company_name, dpp_score, MIN_DPP_FIT_SCORE,
@@ -262,13 +255,13 @@ async def people_worker(
                     await discover_contacts_for_company(
                         company,
                         gemini_client,
-                        notion_clients,
+                        db_clients,
                         contact_finder,
                         email_permutator,
                         smtp_verifier,
                     )
                 except Exception as exc:
-                    company_name = extract_title(company, "Name")
+                    company_name = company["name"]
                     logger.error(
                         "People worker: error processing '%s': %s",
                         company_name, exc,
