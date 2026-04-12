@@ -1,8 +1,4 @@
-"""Layer 5 -- Campaign scoring worker.
-
-Picks up contacts with status "Researched", scores each against every
-active campaign via LLM, writes results to the Contact-Campaign junction.
-"""
+"""Layer 5 -- Campaign scoring: structure research + score per campaign."""
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +15,9 @@ from src.notion.databases_contact_campaigns import ContactCampaignsDB
 from src.notion.prop_helpers import (
     extract_title, extract_rich_text, extract_email, extract_url,
     extract_checkbox, extract_number, extract_select, extract_relation_ids,
+    rich_text_prop,
 )
-from src.prompts.campaign_scoring import SCORE_CONTACT_FOR_CAMPAIGN
+from src.prompts.campaign_scoring import STRUCTURE_AND_SCORE_PERSON
 
 logger = logging.getLogger(__name__)
 MIN_DPP_FIT_SCORE = 7
@@ -90,9 +87,9 @@ async def _score_with_llm(
     campaign_target: str, contact_name: str, job_title: str,
     company_name: str, person_research: str, company_summary: str,
 ) -> dict:
-    """Call Gemini to score a contact against a campaign target."""
+    """Call Gemini to structure research and score a contact for a campaign."""
     prompt = (
-        SCORE_CONTACT_FOR_CAMPAIGN
+        STRUCTURE_AND_SCORE_PERSON
         .replace("{campaign_target}", campaign_target or "(no campaign target provided)")
         .replace("{contact_name}", contact_name or "Unknown")
         .replace("{contact_title}", job_title or "Unknown")
@@ -103,7 +100,7 @@ async def _score_with_llm(
     try:
         result = await gemini_client.generate(
             prompt=prompt,
-            user_message="Score this contact for the campaign.",
+            user_message="Structure this research and score the contact for the campaign.",
             model=config.model_scoring, json_mode=True,
         )
         parsed = json.loads(result["text"])
@@ -111,21 +108,36 @@ async def _score_with_llm(
         logger.info("Scored '%s': %d (in=%d out=%d)", contact_name, score,
                      result.get("input_tokens", 0), result.get("output_tokens", 0))
         return {
+            "determined_role": str(parsed.get("determined_role", "")),
+            "professional_background": str(parsed.get("professional_background", "")),
+            "achievements": str(parsed.get("achievements", "")),
+            "public_activity": str(parsed.get("public_activity", "")),
+            "key_topics": parsed.get("key_topics", []),
+            "relevance_signals": str(parsed.get("relevance_signals", "")),
+            "research_quality": str(parsed.get("research_quality", "")),
+            "context_summary": str(parsed.get("context_summary", "")),
             "relevance_score": score,
             "score_reasoning": str(parsed.get("score_reasoning", "")),
             "personalized_context": str(parsed.get("personalized_context", "")),
         }
     except Exception as exc:
         logger.error("Scoring failed for '%s': %s", contact_name, exc)
-        return {"relevance_score": 0, "score_reasoning": f"Scoring failed: {exc}",
-                "personalized_context": ""}
+        return {
+            "determined_role": "", "professional_background": "",
+            "achievements": "", "public_activity": "",
+            "key_topics": [], "relevance_signals": "",
+            "research_quality": "", "context_summary": "",
+            "relevance_score": 0, "score_reasoning": f"Scoring failed: {exc}",
+            "personalized_context": "",
+        }
 
 
 async def _process_pair(
     contact: dict, campaign: dict, config: Config,
     gemini_client: GeminiClient, notion_client: NotionClient,
-    contact_campaigns_db: ContactCampaignsDB,
+    contacts_db: ContactsDB, contact_campaigns_db: ContactCampaignsDB,
     company_fields: dict, company_id: str,
+    updated_contacts: set[str],
 ) -> bool:
     """Score one contact against one campaign. Returns True if scored."""
     contact_id, campaign_id = contact["id"], campaign["id"]
@@ -141,14 +153,13 @@ async def _process_pair(
     campaign_name = extract_title(campaign, "Name")
     campaign_target = extract_rich_text(campaign, "Target Description")
 
-    # Read Context property first; fall back to page body if empty
-    person_research = extract_rich_text(contact, "Context")
-    if not person_research:
-        try:
-            person_research = _blocks_to_text(
-                await notion_client.get_page_body(contact_id))
-        except Exception as exc:
-            logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
+    # Read FULL contact page body as primary research source
+    person_research = ""
+    try:
+        person_research = _blocks_to_text(
+            await notion_client.get_page_body(contact_id))
+    except Exception as exc:
+        logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
 
     company_summary = ""
     if company_id:
@@ -164,13 +175,31 @@ async def _process_pair(
         person_research, company_summary,
     )
 
+    # Update contact-level fields (first campaign to process wins)
+    if contact_id not in updated_contacts:
+        update_props: dict = {}
+        determined_role = sr.get("determined_role", "")
+        if determined_role and determined_role != cf["job_title"]:
+            update_props["Job Title"] = rich_text_prop(determined_role)
+        context_summary = sr.get("context_summary", "")
+        if context_summary:
+            update_props["Context"] = rich_text_prop(context_summary)
+        if update_props:
+            await contacts_db.update_contact(contact_id, update_props)
+        updated_contacts.add(contact_id)
+
+    # Junction record fields
+    relevance_score = max(1, min(10, int(sr.get("relevance_score", 0))))
+    score_reasoning = str(sr.get("score_reasoning", ""))
+    personalized_context = str(sr.get("personalized_context", ""))
+    context = str(sr.get("context_summary", ""))
+
     # Write junction record (update existing or create new)
     if existing:
         await contact_campaigns_db.update_score(
-            existing["id"], sr["relevance_score"],
-            sr["score_reasoning"], sr["personalized_context"])
+            existing["id"], relevance_score,
+            score_reasoning, personalized_context)
     else:
-        contact_context = extract_rich_text(contact, "Context")
         await contact_campaigns_db.create_entry(
             contact_id=contact_id, campaign_id=campaign_id,
             company_id=company_id, contact_name=cf["contact_name"],
@@ -181,13 +210,13 @@ async def _process_pair(
             industry=company_fields.get("industry", "Other"),
             location=company_fields.get("location", ""),
             company_fit_score=company_fields.get("company_fit_score", 0),
-            relevance_score=sr["relevance_score"],
-            score_reasoning=sr["score_reasoning"],
-            personalized_context=sr["personalized_context"],
-            context=contact_context,
+            relevance_score=relevance_score,
+            score_reasoning=score_reasoning,
+            personalized_context=personalized_context,
+            context=context,
         )
     logger.info("Scored '%s' x '%s': %d",
-                cf["contact_name"], campaign_name, sr["relevance_score"])
+                cf["contact_name"], campaign_name, relevance_score)
     return True
 
 
@@ -221,6 +250,7 @@ async def campaign_scoring_worker(
             scored = 0
             scored_lock = asyncio.Lock()
             sem = asyncio.Semaphore(_CONCURRENCY)
+            updated_contacts: set[str] = set()
 
             async def _bounded(contact: dict, campaign: dict,
                                cfields: dict, cid: str) -> None:
@@ -229,7 +259,9 @@ async def campaign_scoring_worker(
                     try:
                         if await _process_pair(
                             contact, campaign, config, gemini_client,
-                            notion_client, contact_campaigns_db, cfields, cid,
+                            notion_client, contacts_db,
+                            contact_campaigns_db, cfields, cid,
+                            updated_contacts,
                         ):
                             async with scored_lock:
                                 scored += 1
