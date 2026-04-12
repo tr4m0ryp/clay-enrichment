@@ -25,23 +25,23 @@ class TestValidateConfig:
         """No error when required keys are present."""
         config = MagicMock()
         config.gemini_api_key = "test-key"
-        config.notion_api_key = "test-key"
+        config.database_url = "postgresql://localhost/test"
         _validate_config(config)
 
     def test_missing_gemini_key_exits(self):
         """Exits with code 1 when GEMINI_API_KEY is missing."""
         config = MagicMock()
         config.gemini_api_key = ""
-        config.notion_api_key = "test-key"
+        config.database_url = "postgresql://localhost/test"
         with pytest.raises(SystemExit) as exc_info:
             _validate_config(config)
         assert exc_info.value.code == 1
 
-    def test_missing_notion_key_exits(self):
-        """Exits with code 1 when NOTION_API_KEY is missing."""
+    def test_missing_database_url_exits(self):
+        """Exits with code 1 when DATABASE_URL is missing."""
         config = MagicMock()
         config.gemini_api_key = "test-key"
-        config.notion_api_key = ""
+        config.database_url = ""
         with pytest.raises(SystemExit) as exc_info:
             _validate_config(config)
         assert exc_info.value.code == 1
@@ -50,7 +50,7 @@ class TestValidateConfig:
         """Exits with code 1 when all required keys are missing."""
         config = MagicMock()
         config.gemini_api_key = ""
-        config.notion_api_key = ""
+        config.database_url = ""
         with pytest.raises(SystemExit) as exc_info:
             _validate_config(config)
         assert exc_info.value.code == 1
