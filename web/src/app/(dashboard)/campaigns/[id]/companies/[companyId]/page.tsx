@@ -2,16 +2,16 @@ import { notFound } from "next/navigation";
 import { getCompanyById, getCampaignsByCompany, getContactsByCompany } from "@/lib/queries";
 import { CompanyDetail } from "@/components/company-detail";
 
-export default async function CompanyDetailPage({
+export default async function CampaignCompanyPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string; companyId: string }>;
 }) {
-  const { id } = await params;
+  const { id, companyId } = await params;
   const [company, campaigns, contacts] = await Promise.all([
-    getCompanyById(id),
-    getCampaignsByCompany(id),
-    getContactsByCompany(id),
+    getCompanyById(companyId),
+    getCampaignsByCompany(companyId),
+    getContactsByCompany(companyId),
   ]);
   if (!company) notFound();
   return (
@@ -19,7 +19,8 @@ export default async function CompanyDetailPage({
       company={company}
       campaigns={campaigns}
       contacts={contacts}
-      backUrl="/companies"
+      backUrl={`/campaigns/${id}/companies`}
+      campaignId={id}
     />
   );
 }

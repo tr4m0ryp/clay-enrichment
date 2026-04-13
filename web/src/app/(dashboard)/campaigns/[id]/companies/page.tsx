@@ -71,7 +71,7 @@ export default async function CampaignCompaniesPage({
                   <TableCell className="font-medium">
                     <Link
                       prefetch
-                      href={`/companies/${c.id}`}
+                      href={`/campaigns/${id}/companies/${c.id}`}
                       className="hover:text-primary hover:underline underline-offset-4"
                     >
                       {(c.name as string) || "--"}
