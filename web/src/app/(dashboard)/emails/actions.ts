@@ -57,7 +57,8 @@ export async function rejectEmailAndNext(id: string) {
 export async function updateEmail(id: string, subject: string, body: string) {
   await sql`
     UPDATE emails
-    SET subject = ${subject}, body = ${body}, updated_at = now()
+    SET subject = ${subject}, body = ${body},
+        status = 'Pending Review', updated_at = now()
     WHERE id = ${id}
   `;
   revalidatePath("/emails");

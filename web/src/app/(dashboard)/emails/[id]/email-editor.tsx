@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,78 +17,58 @@ export function EmailEditor({
   initialSubject,
   initialBody,
 }: EmailEditorProps) {
-  const [editing, setEditing] = useState(false);
   const [subject, setSubject] = useState(initialSubject);
   const [body, setBody] = useState(initialBody);
-  const [saving, setSaving] = useState(false);
-
-  async function handleSave() {
-    setSaving(true);
-    await updateEmail(emailId, subject, body);
-    setSaving(false);
-    setEditing(false);
-  }
+  const [isPending, startTransition] = useTransition();
+  const isDirty = subject !== initialSubject || body !== initialBody;
 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>Subject</CardTitle>
-          {!editing && (
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-              Edit
-            </Button>
-          )}
         </CardHeader>
         <CardContent>
-          {editing ? (
-            <Input
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-            />
-          ) : (
-            <p className="text-sm font-medium text-foreground">{subject}</p>
-          )}
+          <Input
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+          />
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader>
           <CardTitle>Email Body</CardTitle>
-          {!editing && (
-            <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-              Edit
-            </Button>
-          )}
         </CardHeader>
         <CardContent>
-          {editing ? (
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={14}
-              className="w-full resize-y rounded border border-border bg-background px-3 py-2 text-sm text-foreground leading-relaxed transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            />
-          ) : (
-            <p className="text-sm leading-relaxed text-muted-foreground whitespace-pre-line">
-              {body}
-            </p>
-          )}
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={14}
+            className="w-full resize-y rounded border border-border bg-background px-3 py-2 text-sm text-foreground leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
         </CardContent>
       </Card>
 
-      {editing && (
+      {isDirty && (
         <div className="flex gap-2">
-          <Button variant="brand" size="sm" onClick={handleSave} disabled={saving}>
-            {saving ? "Saving..." : "Save"}
+          <Button
+            variant="brand"
+            size="sm"
+            disabled={isPending}
+            onClick={() =>
+              startTransition(() => updateEmail(emailId, subject, body))
+            }
+          >
+            {isPending ? "Saving..." : "Save"}
           </Button>
           <Button
             variant="outline"
             size="sm"
+            disabled={isPending}
             onClick={() => {
               setSubject(initialSubject);
               setBody(initialBody);
-              setEditing(false);
             }}
           >
             Cancel
