@@ -17,6 +17,7 @@ from uuid import UUID
 
 from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
+from src.discovery.title_filter import is_relevant_title
 from src.models.gemini import GeminiClient
 from src.prompts.person_research import RESEARCH_PERSON_GROUNDED
 
@@ -66,6 +67,14 @@ async def _research_contact(
     contact_id = str(contact["id"])
     contact_name = contact.get("name") or ""
     job_title = contact.get("job_title") or ""
+
+    # Gate: skip contacts with irrelevant or empty titles
+    if not is_relevant_title(job_title):
+        logger.info(
+            "Skipping research for '%s': title '%s' not relevant",
+            contact_name, job_title,
+        )
+        return False
 
     # Resolve company from direct FK
     company_id = contact.get("company_id")
