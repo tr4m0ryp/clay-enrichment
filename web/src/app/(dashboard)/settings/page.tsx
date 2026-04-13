@@ -23,20 +23,30 @@ export default async function SettingsPage() {
   }
 
   // Mask API keys -- never send full values to client
+  // Fall back to process.env when the settings table has no entry
   const apiKeyNames = [
     "gemini_api_key",
     "brave_search_api_key",
     "serper_api_key",
   ];
+  const envKeyMap: Record<string, string> = {
+    gemini_api_key: "GEMINI_API_KEY",
+    brave_search_api_key: "BRAVE_SEARCH_API_KEY",
+    serper_api_key: "SERPER_API_KEY",
+  };
   const keyStatus: Record<string, { configured: boolean; hint: string }> = {};
   for (const key of apiKeyNames) {
-    const val = settingsMap[key];
+    const envName = envKeyMap[key];
+    const val =
+      settingsMap[key] ||
+      (envName ? process.env[envName] : undefined) ||
+      "";
     keyStatus[key] = {
       configured: !!val,
       hint: val
-        ? val.length <= 2
-          ? "**"
-          : `${val[0]}${"*".repeat(Math.min(val.length - 2, 8))}${val[val.length - 1]}`
+        ? val.length <= 8
+          ? `${val.slice(0, 2)}${"*".repeat(4)}${val.slice(-2)}`
+          : `${val.slice(0, 4)}${"*".repeat(6)}${val.slice(-4)}`
         : "",
     };
   }
