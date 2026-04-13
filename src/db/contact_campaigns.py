@@ -141,7 +141,7 @@ class ContactCampaignsDB:
         if industry not in INDUSTRY_OPTIONS:
             industry = "Other"
 
-        entry_name = f"{contact_name} - {campaign_name}"
+        entry_name = contact_name
 
         row = await self._pool.fetchrow(
             """
