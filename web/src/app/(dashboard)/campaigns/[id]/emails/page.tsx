@@ -65,7 +65,7 @@ export default async function CampaignEmailsPage({
             <Link
               prefetch
               key={email.id}
-              href={`/emails/${email.id}`}
+              href={`/campaigns/${id}/emails/${email.id}`}
               className="block"
             >
               <Card className="cursor-pointer transition-shadow hover:shadow-md">

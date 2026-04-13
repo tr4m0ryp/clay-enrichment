@@ -24,13 +24,19 @@ async function getEmailDetail(id: string): Promise<EmailData | null> {
   return (rows[0] as EmailData) ?? null;
 }
 
-export default async function EmailDetailPage({
+export default async function CampaignEmailPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string; emailId: string }>;
 }) {
-  const { id } = await params;
-  const email = await getEmailDetail(id);
+  const { id, emailId } = await params;
+  const email = await getEmailDetail(emailId);
   if (!email) notFound();
-  return <EmailDetail email={email} backUrl="/emails" />;
+  return (
+    <EmailDetail
+      email={email}
+      backUrl={`/campaigns/${id}/emails`}
+      campaignId={id}
+    />
+  );
 }
