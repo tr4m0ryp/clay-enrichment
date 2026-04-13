@@ -29,24 +29,27 @@ Return a JSON array of objects. Nothing else.
 
 ```json
 [
-  {
-    "name": "Jane Smith",
-    "title": "Head of Sustainability",
-    "linkedin_url": "https://www.linkedin.com/in/janesmith"
-  }
+  {"name": "Jane Smith", "title": "Head of Sustainability", "linkedin_url": "https://www.linkedin.com/in/janesmith"},
+  {"name": "John Doe", "title": "CEO", "linkedin_url": ""},
+  {"name": "Unknown Person", "title": "", "linkedin_url": ""}
 ]
 ```
 
 ### Field Specifications
 
 - name: Full name as it appears in the search results.
-- title: The person's actual job function/role (e.g. "Head of Sustainability", \
-"CEO", "Product Manager", "Supply Chain Director"). Follow these rules strictly:
-  - Strip company names from titles. "VP Sales at Acme Corp" becomes "VP Sales".
-  - Strip location info. "Boston, Massachusetts" is NOT a title -- set to "".
-  - The company name alone is NOT a title. "Acme Corp" or "REPRESENT" is not valid.
-  - LinkedIn headlines that are just company names or slogans are NOT titles.
-  - If no clear job function can be determined, set title to an empty string "".
+- title: The person's job title in standardized short format. Follow these rules strictly:
+  - Maximum 5 words. Examples: "CEO", "Head of Sustainability", "VP Supply Chain", "Creative Director"
+  - Use standard abbreviations: CEO, CTO, CFO, COO, CMO, CRO, VP, SVP, EVP, MD
+  - Strip ALL company names: "CEO of Nike" becomes "CEO"
+  - Strip ALL locations: "VP Sales, EMEA" becomes "VP Sales"
+  - Strip ALL parenthetical info: "CFO (interim)" becomes "CFO"
+  - Strip ALL commentary: no "(unverified)", "(formerly)", "(deceased)", dates, or qualifiers
+  - English only: translate foreign titles. "Responsabile vendite" becomes "Sales Manager"
+  - Current role only: "Former CEO" or "Seeking new opportunities" is NOT a valid title -- set to ""
+  - LinkedIn headlines that are slogans, company names, or inspirational text are NOT titles -- set to ""
+  - If no clear current job function can be determined, set title to empty string ""
+  - Do NOT set title to "Unknown", "No data found", or "No current role found" -- use empty string ""
 - linkedin_url: LinkedIn profile URL if available. Empty string if not found.
 
 ### Rules
