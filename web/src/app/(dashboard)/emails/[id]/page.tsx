@@ -72,6 +72,7 @@ export default async function EmailDetailPage({
   return (
     <div className="space-y-6">
       <Link
+        prefetch
         href="/emails"
         className="text-sm text-muted-foreground hover:text-foreground"
       >
@@ -104,6 +105,7 @@ export default async function EmailDetailPage({
               <dd className="mt-0.5 text-sm">
                 {email.contact_id ? (
                   <Link
+                    prefetch
                     href={`/contacts/${email.contact_id}`}
                     className="text-primary hover:underline"
                   >

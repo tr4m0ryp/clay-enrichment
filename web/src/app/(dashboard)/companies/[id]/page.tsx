@@ -62,6 +62,7 @@ export default async function CompanyDetailPage({
     <div className="space-y-6">
       {/* Back link */}
       <Link
+        prefetch
         href="/companies"
         className="text-sm text-muted-foreground hover:text-foreground"
       >
@@ -121,6 +122,7 @@ export default async function CompanyDetailPage({
               {contacts.map((ct: Record<string, unknown>) => (
                 <li key={ct.id as string}>
                   <Link
+                    prefetch
                     href={`/contacts/${ct.id}`}
                     className="text-sm text-primary hover:underline"
                   >

@@ -130,6 +130,7 @@ export default async function DashboardPage() {
                 <TableRow key={c.id as string}>
                   <TableCell className="font-medium">
                     <Link
+                      prefetch
                       href={`/campaigns/${c.id}`}
                       className="text-foreground hover:text-primary hover:underline underline-offset-4"
                     >
