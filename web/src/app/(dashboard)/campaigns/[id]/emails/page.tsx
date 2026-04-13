@@ -63,6 +63,7 @@ export default async function CampaignEmailsPage({
         <div className="mt-4 grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {emails.map((email) => (
             <Link
+              prefetch
               key={email.id}
               href={`/emails/${email.id}`}
               className="block"

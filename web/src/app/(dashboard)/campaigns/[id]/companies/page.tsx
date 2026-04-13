@@ -69,6 +69,7 @@ export default async function CampaignCompaniesPage({
                 <TableRow key={c.id as string}>
                   <TableCell className="font-medium">
                     <Link
+                      prefetch
                       href={`/companies/${c.id}`}
                       className="hover:text-primary hover:underline underline-offset-4"
                     >

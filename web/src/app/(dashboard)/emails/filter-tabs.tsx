@@ -10,6 +10,7 @@ export function FilterTabs({ current }: { current: string }) {
     <div className="flex gap-1 border-b border-border">
       {TABS.map((tab) => (
         <Link
+          prefetch
           key={tab}
           href={`/emails?status=${encodeURIComponent(tab)}`}
           className={cn(
