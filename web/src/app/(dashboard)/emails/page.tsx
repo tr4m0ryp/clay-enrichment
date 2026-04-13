@@ -91,7 +91,7 @@ export default async function EmailsPage({
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {emails.map((email) => (
-            <Link key={email.id} href={`/emails/${email.id}`} className="block">
+            <Link prefetch key={email.id} href={`/emails/${email.id}`} className="block">
               <Card className="cursor-pointer transition-shadow hover:shadow-md">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
