@@ -9,9 +9,9 @@ export default function DashboardLayout({
 }) {
   return (
     <CampaignProvider>
-      <div className="flex min-h-screen">
+      <div className="flex h-screen overflow-hidden">
         <Sidebar />
-        <div className="flex flex-1 flex-col ml-14">
+        <div className="flex flex-1 flex-col ml-14 overflow-y-auto">
           <Header />
           <main className="flex-1 p-6">{children}</main>
         </div>
