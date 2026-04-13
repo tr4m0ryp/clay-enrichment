@@ -69,6 +69,7 @@ export default async function CampaignDetailPage({
       <div className="flex items-start justify-between">
         <div>
           <Link
+            prefetch
             href="/campaigns"
             className="text-sm text-muted-foreground hover:text-foreground"
           >
@@ -128,7 +129,7 @@ function StatCard({
   href: string;
 }) {
   return (
-    <Link href={href}>
+    <Link prefetch href={href}>
       <Card className="hover:border-primary/30 transition-colors">
         <CardContent className="p-4">
           <p className="text-sm text-muted-foreground">{label}</p>

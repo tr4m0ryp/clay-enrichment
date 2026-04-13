@@ -39,6 +39,7 @@ export default async function ContactDetailPage({
       label: "Company",
       value: contact.company_id ? (
         <Link
+          prefetch
           href={`/companies/${contact.company_id}`}
           className="text-primary hover:underline"
         >
@@ -62,6 +63,7 @@ export default async function ContactDetailPage({
     <div className="space-y-6">
       {/* Back link */}
       <Link
+        prefetch
         href="/contacts"
         className="text-sm text-muted-foreground hover:text-foreground"
       >

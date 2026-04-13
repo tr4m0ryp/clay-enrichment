@@ -16,6 +16,7 @@ export function CampaignEmailFilterTabs({
     <div className="flex gap-1 border-b border-border">
       {TABS.map((tab) => (
         <Link
+          prefetch
           key={tab}
           href={`/campaigns/${campaignId}/emails?status=${encodeURIComponent(tab)}`}
           className={cn(
