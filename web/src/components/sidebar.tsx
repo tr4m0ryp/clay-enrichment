@@ -15,7 +15,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useCampaign } from "@/lib/campaign-context";
-import { AveleroLogo } from "@/components/avelero-logo";
+import { AveleroIcon } from "@/components/avelero-icon";
 import { useRef, useState } from "react";
 
 interface NavItem {
@@ -31,6 +31,7 @@ function NavLink({ href, icon, label, isExpanded, exact }: NavItem & { isExpande
 
   return (
     <Link
+      prefetch
       href={href}
       title={label}
       className={cn(
@@ -90,12 +91,13 @@ export function Sidebar() {
           style={{ height: 56 }}
         >
           <div className="flex-shrink-0 w-14 h-14 flex items-center justify-center">
-            <AveleroLogo height={20} />
+            <AveleroIcon size={22} />
           </div>
         </div>
 
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           <Link
+            prefetch
             href="/"
             title="Back to dashboard"
             className="relative flex items-center h-8 rounded text-xs font-medium text-muted-foreground hover:text-foreground transition-colors mb-1"
@@ -154,7 +156,7 @@ export function Sidebar() {
         style={{ height: 56 }}
       >
         <div className="flex-shrink-0 w-14 h-14 flex items-center justify-center">
-          <AveleroLogo height={20} />
+          <AveleroIcon size={22} />
         </div>
       </div>
 
