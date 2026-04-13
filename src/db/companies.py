@@ -242,6 +242,22 @@ class CompaniesDB:
         )
 
     # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
+    async def delete_company(self, company_id: str) -> None:
+        """Delete a company by ID.
+
+        Related rows in company_campaigns are CASCADE-deleted.
+        Contacts and contact_campaigns referencing this company have
+        their company_id set to NULL (ON DELETE SET NULL).
+        """
+        await self._pool.execute(
+            "DELETE FROM companies WHERE id = $1",
+            UUID(company_id),
+        )
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
