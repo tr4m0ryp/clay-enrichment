@@ -1,24 +1,22 @@
 """
 Layer 2: Company enrichment worker.
 
-Continuous async loop that picks up Discovered and stale companies,
-runs two-step Gemini grounding enrichment per company, then writes
-structured results back to Postgres (column updates + body text report).
-
-Step 1: Grounded web research via Google Search (free text).
-Step 2: JSON structuring of research results.
-Fallback: website scrape with legacy prompt on grounding failure.
+Picks up Discovered/stale companies, runs two-step Gemini grounding
+enrichment, writes results to Postgres. Website resolution chain:
+SearXNG resolver -> Gemini grounded lookup -> delete company.
 """
 
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from src.prompts.enrichment import (
     RESEARCH_COMPANY_GROUNDED,
     STRUCTURE_COMPANY_ENRICHMENT,
 )
+from src.prompts.website_lookup import FIND_COMPANY_WEBSITE
 from src.search.website_resolver import resolve_website
 from src.layers.enrichment_helpers import (
     build_enrichment_text,
@@ -50,6 +48,64 @@ async def _get_campaign_target(company: dict, companies_db, campaigns_db) -> str
         logger.warning("Failed to fetch campaign target: %s", exc)
 
     return ""
+
+
+async def _gemini_website_lookup(
+    name: str, gemini_client, config,
+) -> str:
+    """Fallback: ask Gemini with Google Search grounding to find the website."""
+    prompt = FIND_COMPANY_WEBSITE.replace("{company_name}", name)
+
+    try:
+        result = await gemini_client.generate(
+            prompt=prompt,
+            user_message=f"Find the official website for: {name}",
+            model=config.model_research,
+            grounding=True,
+        )
+        text = result["text"].strip()
+        logger.info(
+            "Gemini website lookup for '%s': in=%d out=%d tokens",
+            name, result["input_tokens"], result["output_tokens"],
+        )
+
+        # Parse JSON from grounded response (may contain markdown fences)
+        parsed = _extract_json(text)
+        if not parsed:
+            return ""
+
+        url = parsed.get("website_url", "")
+        confidence = parsed.get("confidence", "none")
+        if url and confidence != "none":
+            return url
+    except Exception as exc:
+        logger.warning("Gemini website lookup failed for '%s': %s", name, exc)
+
+    return ""
+
+
+def _extract_json(text: str) -> dict | None:
+    """Extract a JSON object from text that may contain markdown fences."""
+    # Try direct parse first
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try extracting from markdown code block
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Try finding any JSON object in the text
+    match = re.search(r"\{[^{}]*\}", text)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
 
 
 async def _grounded_research(
@@ -121,11 +177,25 @@ async def _enrich_company(
     company_id = str(company["id"])
     existing_url = company.get("website") or ""
 
-    # Resolve website URL
+    # Resolve website URL -- SearXNG first, then Gemini grounded fallback
     website = await resolve_website(name, search_client, existing_url=existing_url)
     if website and website != existing_url:
         await companies_db.update_company(company_id, {"website": website})
         logger.info("Resolved website for '%s': %s", name, website)
+
+    # Gemini grounded retry when resolver returns nothing
+    if not website:
+        website = await _gemini_website_lookup(name, gemini_client, config)
+        if website:
+            await companies_db.update_company(company_id, {"website": website})
+            logger.info("Gemini resolved website for '%s': %s", name, website)
+        else:
+            logger.warning(
+                "No website found for '%s' after resolver + Gemini. "
+                "Deleting company.", name,
+            )
+            await companies_db.delete_company(company_id)
+            return
 
     campaign_target = await _get_campaign_target(company, companies_db, campaigns_db)
     status = "Enriched"
