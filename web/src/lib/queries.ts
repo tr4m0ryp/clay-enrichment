@@ -238,18 +238,18 @@ export async function getSenderAccounts() {
 // ---------------------------------------------------------------------------
 
 export async function getDashboardStats() {
-  const [emailsSent, emailsPending, emailsFailed, activeCampaigns] =
+  const [leadsFound, leadsEnriched, emailsReady, activeCampaigns] =
     await Promise.all([
-      sql`SELECT count(*)::int AS count FROM emails WHERE status = 'Sent'`,
-      sql`SELECT count(*)::int AS count FROM emails WHERE status = 'Pending'`,
-      sql`SELECT count(*)::int AS count FROM emails WHERE status IN ('Failed', 'Bounced')`,
+      sql`SELECT count(*)::int AS count FROM contacts`,
+      sql`SELECT count(*)::int AS count FROM contacts WHERE status IN ('Enriched', 'Researched', 'Email Generated')`,
+      sql`SELECT count(*)::int AS count FROM emails WHERE status = 'Pending Review'`,
       sql`SELECT count(*)::int AS count FROM campaigns WHERE status = 'Active'`,
     ]);
 
   return {
-    emailsSent: emailsSent[0].count as number,
-    emailsPending: emailsPending[0].count as number,
-    emailsFailed: emailsFailed[0].count as number,
+    leadsFound: leadsFound[0].count as number,
+    leadsEnriched: leadsEnriched[0].count as number,
+    emailsReady: emailsReady[0].count as number,
     activeCampaigns: activeCampaigns[0].count as number,
   };
 }

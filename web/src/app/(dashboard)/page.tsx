@@ -61,23 +61,23 @@ export default async function DashboardPage() {
         <CreateCampaignForm />
       </div>
 
-      {/* Operational stats */}
+      {/* Lead funnel stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Emails Sent"
-          value={stats.emailsSent}
-          description="Successfully delivered"
+          title="Leads Found"
+          value={stats.leadsFound}
+          description="Total contacts discovered"
           highlight
         />
         <StatsCard
-          title="Emails Pending"
-          value={stats.emailsPending}
-          description="Awaiting review or send"
+          title="Leads Enriched"
+          value={stats.leadsEnriched}
+          description="Enriched, researched, or email generated"
         />
         <StatsCard
-          title="Emails Failed"
-          value={stats.emailsFailed}
-          description="Bounced or failed"
+          title="Emails Ready"
+          value={stats.emailsReady}
+          description="Pending review"
         />
         <StatsCard
           title="Active Campaigns"
