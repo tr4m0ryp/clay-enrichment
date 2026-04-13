@@ -209,8 +209,13 @@ export async function getLeadsByCampaign(campaignId: string) {
     SELECT
       cc.id, cc.name, cc.job_title, cc.company_name, cc.email,
       cc.linkedin_url, cc.company_fit_score, cc.relevance_score,
-      cc.outreach_status, cc.email_subject, cc.campaign_id
+      cc.outreach_status, cc.email_subject, cc.campaign_id,
+      cc.score_reasoning, cc.context, cc.personalized_context,
+      co.website AS company_url,
+      e.body AS email_body
     FROM contact_campaigns cc
+    LEFT JOIN companies co ON co.id = cc.company_id
+    LEFT JOIN emails e ON e.contact_id = cc.contact_id AND e.campaign_id = cc.campaign_id
     WHERE cc.campaign_id = ${campaignId}
       AND (cc.company_fit_score >= 7 OR cc.relevance_score >= 7)
     ORDER BY cc.relevance_score DESC NULLS LAST, cc.company_fit_score DESC NULLS LAST
