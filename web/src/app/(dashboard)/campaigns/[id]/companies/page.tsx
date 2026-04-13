@@ -51,7 +51,7 @@ export default async function CampaignCompaniesPage({
         <DataTable
           count={companies.length}
           empty="No companies linked to this campaign yet."
-          colSpan={6}
+          colSpan={7}
         >
           <TableHeader>
             <TableRow>
@@ -60,6 +60,7 @@ export default async function CampaignCompaniesPage({
               <TableHead>Industry</TableHead>
               <TableHead>Location</TableHead>
               <TableHead className="text-right">DPP Fit</TableHead>
+              <TableHead>Reasoning</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
           </TableHeader>
@@ -98,6 +99,11 @@ export default async function CampaignCompaniesPage({
                   <TableCell className="text-right tabular-nums">
                     <span className={scoreColor(c.dpp_fit_score as number)}>
                       {c.dpp_fit_score != null ? String(c.dpp_fit_score) : "--"}
+                    </span>
+                  </TableCell>
+                  <TableCell className="max-w-[240px]">
+                    <span className="line-clamp-2 text-xs text-muted-foreground">
+                      {(c.dpp_fit_reasoning as string) || "--"}
                     </span>
                   </TableCell>
                   <TableCell>

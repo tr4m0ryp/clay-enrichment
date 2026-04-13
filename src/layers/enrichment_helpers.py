@@ -83,6 +83,9 @@ def build_properties_update(result: dict, status: str) -> dict:
     if score is not None:
         props["dpp_fit_score"] = int(score)
 
+    if "dpp_fit_reasoning" in result:
+        props["dpp_fit_reasoning"] = str(result["dpp_fit_reasoning"])
+
     return props
 
 
