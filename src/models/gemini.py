@@ -2,11 +2,26 @@ import json
 import time
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from src.utils.logger import get_logger
+from src.utils.rate_limiter import QuotaExhaustedError
 
 logger = get_logger(__name__)
+
+
+def _is_daily_quota_error(exc: Exception) -> bool:
+    """Detect whether a Gemini 429 is a per-day quota exhaustion."""
+    if not isinstance(exc, genai_errors.ClientError):
+        return False
+    if getattr(exc, "code", None) != 429:
+        return False
+    details = getattr(exc, "details", None) or {}
+    text = json.dumps(details) if isinstance(details, dict) else str(details)
+    # Free tier daily quota metrics look like:
+    # "generate_content_free_tier_requests" / "PerDayPerProjectPerModel"
+    return "PerDay" in text or "free_tier_requests" in text
 
 
 class GeminiClient:
@@ -39,7 +54,14 @@ class GeminiClient:
             {"text": str, "input_tokens": int, "output_tokens": int}
         """
         resolved_model = self._resolve_model(model)
-        await self._rate_limiter.acquire(resolved_model)
+        try:
+            await self._rate_limiter.acquire(resolved_model)
+        except QuotaExhaustedError as exc:
+            logger.warning(
+                "Skipping Gemini call: %s. Upgrade to paid tier to increase quota.",
+                exc,
+            )
+            raise
 
         config_kwargs: dict = {
             "temperature": temperature,
@@ -62,7 +84,18 @@ class GeminiClient:
                 config=gen_config,
             )
         except Exception as exc:
-            logger.error("Gemini API error (model=%s): %s", resolved_model, exc)
+            if _is_daily_quota_error(exc):
+                logger.error(
+                    "Gemini daily quota exhausted (model=%s). Locking out until "
+                    "midnight Pacific. Upgrade to paid tier to increase quota.",
+                    resolved_model,
+                )
+                try:
+                    self._rate_limiter.set_lockout(resolved_model)
+                except KeyError:
+                    pass
+            else:
+                logger.error("Gemini API error (model=%s): %s", resolved_model, exc)
             raise
 
         elapsed = time.monotonic() - start

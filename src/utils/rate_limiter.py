@@ -31,19 +31,39 @@ class RateLimitConfig:
         window_seconds: The sliding window duration in seconds.
         is_daily: If True, the window resets at midnight Pacific Time instead
                   of using a sliding window.
+        daily_ceiling: Optional additional per-day cap applied on top of the
+                       per-window ceiling. Resets at midnight Pacific.
     """
 
     ceiling: float
     window_seconds: float
     is_daily: bool = False
+    daily_ceiling: int | None = None
 
 
-# Default limits at 80% of stated API ceilings.
+class QuotaExhaustedError(Exception):
+    """Raised when an API's daily quota is exhausted and cannot be retried soon."""
+
+
+# Default limits tuned for Gemini API free tier (with headroom).
+# Free tier stated quotas (per project, per model, per day):
+#   gemini-2.5-flash-lite: 15 RPM / 1000 RPD (20 RPD observed on this key)
+#   gemini-2.5-flash:      10 RPM / 250 RPD
+#   gemini-2.5-pro:         5 RPM / 100 RPD
+# Set daily_ceiling well below stated RPD to avoid hitting 429s locally; the
+# quota-exhaustion detection in GeminiClient will clamp tighter if actual
+# quota is lower than configured.
 DEFAULT_LIMITS: Dict[str, RateLimitConfig] = {
     # Gemini models -- keys match the model names in .env config
-    "gemini-2.5-flash-lite": RateLimitConfig(ceiling=240, window_seconds=60.0),
-    "gemini-2.5-flash": RateLimitConfig(ceiling=120, window_seconds=60.0),
-    "gemini-2.5-pro": RateLimitConfig(ceiling=120, window_seconds=60.0),
+    "gemini-2.5-flash-lite": RateLimitConfig(
+        ceiling=12, window_seconds=60.0, daily_ceiling=800,
+    ),
+    "gemini-2.5-flash": RateLimitConfig(
+        ceiling=8, window_seconds=60.0, daily_ceiling=200,
+    ),
+    "gemini-2.5-pro": RateLimitConfig(
+        ceiling=4, window_seconds=60.0, daily_ceiling=80,
+    ),
     # Legacy short names (for backward compat with tests)
     "gemini-flash-lite": RateLimitConfig(ceiling=240, window_seconds=60.0),
     "gemini-flash": RateLimitConfig(ceiling=120, window_seconds=60.0),
@@ -98,18 +118,27 @@ class RateLimiter:
         self._limits: Dict[str, RateLimitConfig] = limits if limits is not None else DEFAULT_LIMITS
         self._buckets: Dict[str, deque] = {name: deque() for name in self._limits}
         self._locks: Dict[str, asyncio.Lock] = {name: asyncio.Lock() for name in self._limits}
-        # For daily limits: track the reset timestamp
+        # For daily limits (is_daily OR daily_ceiling): track the reset timestamp
         self._daily_reset: Dict[str, float] = {
             name: _pacific_midnight_tomorrow()
             for name, cfg in self._limits.items()
-            if cfg.is_daily
+            if cfg.is_daily or cfg.daily_ceiling is not None
         }
+        # Separate bucket for daily_ceiling tracking (when paired with per-window ceiling).
+        self._daily_buckets: Dict[str, deque] = {
+            name: deque()
+            for name, cfg in self._limits.items()
+            if cfg.daily_ceiling is not None
+        }
+        # Hard lockouts: acquire() raises QuotaExhaustedError until this timestamp.
+        self._lockouts: Dict[str, float] = {}
 
     def _purge_expired(self, api_name: str, now: float) -> None:
         """
         Remove timestamps outside the current sliding window from the bucket.
 
         For daily limits, clears the entire bucket if the reset time has passed.
+        For configs with daily_ceiling, also clears the daily bucket at reset.
 
         Args:
             api_name: The API identifier whose bucket to purge.
@@ -127,6 +156,16 @@ class RateLimiter:
             cutoff = now - cfg.window_seconds
             while bucket and bucket[0] <= cutoff:
                 bucket.popleft()
+
+        # Purge secondary daily bucket if configured.
+        if cfg.daily_ceiling is not None:
+            daily_reset = self._daily_reset.get(api_name)
+            if daily_reset is not None and now >= daily_reset:
+                self._daily_buckets[api_name].clear()
+                self._daily_reset[api_name] = _pacific_midnight_tomorrow()
+                # Clear any stale lockout when the daily window resets.
+                if api_name in self._lockouts and self._lockouts[api_name] <= now:
+                    self._lockouts.pop(api_name, None)
 
     def can_proceed(self, api_name: str) -> bool:
         """
@@ -150,8 +189,16 @@ class RateLimiter:
 
         now = time.time()
         cfg = self._limits[api_name]
+        # Hard lockout from prior quota exhaustion.
+        if self._lockouts.get(api_name, 0.0) > now:
+            return False
         self._purge_expired(api_name, now)
-        return len(self._buckets[api_name]) < cfg.ceiling
+        if len(self._buckets[api_name]) >= cfg.ceiling:
+            return False
+        if cfg.daily_ceiling is not None:
+            if len(self._daily_buckets[api_name]) >= cfg.daily_ceiling:
+                return False
+        return True
 
     async def acquire(self, api_name: str) -> None:
         """
@@ -176,10 +223,33 @@ class RateLimiter:
             cfg = self._limits[api_name]
             bucket = self._buckets[api_name]
 
+            # Fail fast if this API is locked out from a prior 429 daily exhaustion.
+            now = time.time()
+            lockout_until = self._lockouts.get(api_name, 0.0)
+            if lockout_until > now:
+                wait = lockout_until - now
+                raise QuotaExhaustedError(
+                    f"{api_name} daily quota exhausted; locked out for {wait:.0f}s "
+                    f"until midnight Pacific reset"
+                )
+
             while True:
                 now = time.time()
                 self._purge_expired(api_name, now)
                 count = len(bucket)
+
+                # Check daily_ceiling first -- if exhausted, this will be a long wait,
+                # so raise instead of blocking the caller for hours.
+                if cfg.daily_ceiling is not None:
+                    daily_count = len(self._daily_buckets[api_name])
+                    if daily_count >= cfg.daily_ceiling:
+                        reset_time = self._daily_reset[api_name]
+                        wait = max(0.0, reset_time - now)
+                        raise QuotaExhaustedError(
+                            f"{api_name} daily ceiling reached "
+                            f"({daily_count}/{cfg.daily_ceiling}); "
+                            f"{wait:.0f}s until midnight Pacific reset"
+                        )
 
                 if count < cfg.ceiling:
                     break
@@ -203,8 +273,12 @@ class RateLimiter:
 
                 await asyncio.sleep(wait)
 
-            # Consume the slot
-            bucket.append(time.time())
+            # Consume the slot (both per-window and daily trackers).
+            stamp = time.time()
+            bucket.append(stamp)
+            if cfg.daily_ceiling is not None:
+                self._daily_buckets[api_name].append(stamp)
+
             current_count = len(bucket)
             utilisation = current_count / cfg.ceiling
 
@@ -213,6 +287,37 @@ class RateLimiter:
                     "Rate limiter: %s utilisation at %.0f%% of ceiling (%d/%d).",
                     api_name, utilisation * 100, current_count, int(cfg.ceiling),
                 )
+
+            if cfg.daily_ceiling is not None:
+                daily_count = len(self._daily_buckets[api_name])
+                if daily_count >= cfg.daily_ceiling * 0.9:
+                    logger.warning(
+                        "Rate limiter: %s daily utilisation at %d/%d.",
+                        api_name, daily_count, cfg.daily_ceiling,
+                    )
+
+    def set_lockout(self, api_name: str, until: float | None = None) -> None:
+        """
+        Lock out further acquire() calls for an API until the given timestamp.
+
+        Called by the Gemini client when it observes a 429 RESOURCE_EXHAUSTED
+        response, so subsequent calls fail fast rather than hammering the API.
+
+        Args:
+            api_name: The API identifier to lock out.
+            until: Unix timestamp when the lockout expires. Defaults to
+                   midnight Pacific (next daily quota reset).
+        """
+        if api_name not in self._limits:
+            raise KeyError(f"Unknown API: {api_name!r}. Known APIs: {list(self._limits)}")
+        if until is None:
+            until = _pacific_midnight_tomorrow()
+        self._lockouts[api_name] = until
+        remaining = max(0.0, until - time.time())
+        logger.warning(
+            "Rate limiter: locking out %s for %.0fs (until daily quota reset).",
+            api_name, remaining,
+        )
 
     def usage(self, api_name: str) -> int:
         """
