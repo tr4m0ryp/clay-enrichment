@@ -1,11 +1,18 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { sql } from "@/lib/db";
-import { getCampaignById } from "@/lib/queries";
+import { getCampaignById, getCampaignStats } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusActions } from "./status-actions";
 import { DescriptionEditor } from "./description-editor";
+
+interface Campaign {
+  id: string;
+  name: string;
+  status: string;
+  target_description: string | null;
+  created_at: string;
+}
 
 function statusBadgeVariant(status: string) {
   switch (status) {
@@ -22,44 +29,15 @@ function statusBadgeVariant(status: string) {
   }
 }
 
-async function getCampaignStats(campaignId: string) {
-  const [companies, contacts, leads, emails] = await Promise.all([
-    sql`
-      SELECT count(*)::int AS count FROM company_campaigns
-      WHERE campaign_id = ${campaignId}
-    `,
-    sql`
-      SELECT count(*)::int AS count FROM contact_campaign_links
-      WHERE campaign_id = ${campaignId}
-    `,
-    sql`
-      SELECT count(*)::int AS count FROM contact_campaigns
-      WHERE campaign_id = ${campaignId}
-      AND relevance_score IS NOT NULL
-      AND relevance_score >= 7
-    `,
-    sql`
-      SELECT count(*)::int AS count FROM emails
-      WHERE campaign_id = ${campaignId}
-    `,
-  ]);
-
-  return {
-    companies: companies[0].count,
-    contacts: contacts[0].count,
-    highPriorityLeads: leads[0].count,
-    emails: emails[0].count,
-  };
-}
-
 export default async function CampaignDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const campaign = await getCampaignById(id);
-  if (!campaign) notFound();
+  const campaignRaw = await getCampaignById(id);
+  if (!campaignRaw) notFound();
+  const campaign = campaignRaw as unknown as Campaign;
 
   const stats = await getCampaignStats(id);
 
