@@ -32,7 +32,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-MAX_PAGES_PER_QUERY: int = 3
+MAX_PAGES_PER_QUERY: int = 10
 PER_PAGE: int = 100
 INTER_FILE_SLEEP: float = 0.2
 INTER_PAGE_SLEEP: float = 0.5
@@ -47,7 +47,10 @@ _SEARCH_URL_TEMPLATE: str = (
     "https://api.github.com/search/code"
     "?q={query}&per_page={per_page}&page={page}&sort={sort}&order=desc"
 )
-_SORT_ORDER: tuple[str, str] = ("indexed", "updated")
+# Always sort by indexed&order=desc to bias toward freshly-pushed leaks; the
+# `updated` page order pulls repos last touched recently, which tend to have
+# already-rotated keys (lower yield per page).
+_SORT: str = "indexed"
 
 
 async def fetch_search_page(
@@ -66,12 +69,11 @@ async def fetch_search_page(
         if token is None:
             logger.error("scraper aborting: no github tokens available")
             return None
-    sort = _SORT_ORDER[page % 2]
     url = _SEARCH_URL_TEMPLATE.format(
         query=quote_plus(query),
         per_page=PER_PAGE,
         page=page,
-        sort=sort,
+        sort=_SORT,
     )
     return await client.get(url, headers=build_headers(token))
 
