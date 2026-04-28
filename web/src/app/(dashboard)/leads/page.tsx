@@ -1,4 +1,7 @@
-import { sql } from "@/lib/db";
+import {
+  getHighPriorityLeads,
+  getCampaignsList,
+} from "@/lib/queries";
 import {
   TableBody,
   TableHead,
@@ -9,53 +12,6 @@ import { DataTable } from "@/components/ui/data-table";
 import { CampaignFilter } from "./campaign-filter";
 import { LeadRow, LeadTableRow } from "./lead-table";
 
-interface Campaign {
-  id: string;
-  name: string;
-}
-
-async function getHighPriorityLeads(campaignId?: string): Promise<LeadRow[]> {
-  if (campaignId && campaignId !== "all") {
-    return sql`
-      SELECT
-        cc.id, cc.name, cc.job_title, cc.company_name, cc.email,
-        cc.linkedin_url, cc.company_fit_score, cc.relevance_score,
-        cc.outreach_status, cc.email_subject, cc.campaign_id,
-        cc.score_reasoning, cc.context, cc.personalized_context,
-        c.name AS campaign_name,
-        co.website AS company_url,
-        e.body AS email_body
-      FROM contact_campaigns cc
-      LEFT JOIN campaigns c ON c.id = cc.campaign_id
-      LEFT JOIN companies co ON co.id = cc.company_id
-      LEFT JOIN emails e ON e.contact_id = cc.contact_id AND e.campaign_id = cc.campaign_id
-      WHERE cc.campaign_id = ${campaignId}
-        AND (cc.company_fit_score >= 7 OR cc.relevance_score >= 7)
-      ORDER BY cc.relevance_score DESC NULLS LAST, cc.company_fit_score DESC NULLS LAST
-    ` as unknown as LeadRow[];
-  }
-  return sql`
-    SELECT
-      cc.id, cc.name, cc.job_title, cc.company_name, cc.email,
-      cc.linkedin_url, cc.company_fit_score, cc.relevance_score,
-      cc.outreach_status, cc.email_subject, cc.campaign_id,
-      cc.score_reasoning, cc.context, cc.personalized_context,
-      c.name AS campaign_name,
-      co.website AS company_url,
-      e.body AS email_body
-    FROM contact_campaigns cc
-    LEFT JOIN campaigns c ON c.id = cc.campaign_id
-    LEFT JOIN companies co ON co.id = cc.company_id
-    LEFT JOIN emails e ON e.contact_id = cc.contact_id AND e.campaign_id = cc.campaign_id
-    WHERE cc.company_fit_score >= 7 OR cc.relevance_score >= 7
-    ORDER BY cc.relevance_score DESC NULLS LAST, cc.company_fit_score DESC NULLS LAST
-  ` as unknown as LeadRow[];
-}
-
-async function getCampaigns(): Promise<Campaign[]> {
-  return sql`SELECT id, name FROM campaigns ORDER BY name` as unknown as Campaign[];
-}
-
 export default async function LeadsPage({
   searchParams,
 }: {
@@ -63,10 +19,11 @@ export default async function LeadsPage({
 }) {
   const params = await searchParams;
   const campaignFilter = params.campaign ?? "all";
-  const [leads, campaigns] = await Promise.all([
+  const [leadsRaw, campaigns] = await Promise.all([
     getHighPriorityLeads(campaignFilter),
-    getCampaigns(),
+    getCampaignsList(),
   ]);
+  const leads = leadsRaw as unknown as LeadRow[];
 
   return (
     <div>

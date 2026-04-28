@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { sql } from "@/lib/db";
+import { getEmailsWithContacts } from "@/lib/queries";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmailActions } from "./email-actions";
@@ -26,44 +26,6 @@ interface EmailRow {
   created_at: string;
 }
 
-async function getEmailsWithContacts(status?: string): Promise<EmailRow[]> {
-  if (status && status !== "all") {
-    return sql`
-      SELECT
-        e.id,
-        e.subject,
-        e.body,
-        e.status,
-        e.created_at,
-        e.contact_id,
-        ct.name   AS contact_name,
-        ct.email  AS contact_email,
-        co.name   AS company_name
-      FROM emails e
-      LEFT JOIN contacts ct ON ct.id = e.contact_id
-      LEFT JOIN companies co ON co.id = ct.company_id
-      WHERE e.status = ${status}
-      ORDER BY e.created_at DESC
-    `;
-  }
-  return sql`
-    SELECT
-      e.id,
-      e.subject,
-      e.body,
-      e.status,
-      e.created_at,
-      e.contact_id,
-      ct.name   AS contact_name,
-      ct.email  AS contact_email,
-      co.name   AS company_name
-    FROM emails e
-    LEFT JOIN contacts ct ON ct.id = e.contact_id
-    LEFT JOIN companies co ON co.id = ct.company_id
-    ORDER BY e.created_at DESC
-  `;
-}
-
 export default async function EmailsPage({
   searchParams,
 }: {
@@ -71,7 +33,7 @@ export default async function EmailsPage({
 }) {
   const params = await searchParams;
   const filter = params.status ?? "Pending Review";
-  const emails = await getEmailsWithContacts(filter);
+  const emails = (await getEmailsWithContacts(filter)) as unknown as EmailRow[];
 
   return (
     <div>
