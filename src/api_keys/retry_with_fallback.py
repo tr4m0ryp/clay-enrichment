@@ -141,6 +141,8 @@ async def gemini_generate_content(
     prompt: str,
     *,
     generation_config: Optional[dict] = None,
+    tools: Optional[list[dict]] = None,
+    system_instruction: Optional[str] = None,
     max_retries: int = 5,
     circuit_pause_sec: int = 60,
     max_circuit_waits: int = 3,
@@ -154,14 +156,24 @@ async def gemini_generate_content(
     callers is :class:`GeminiPoolExhausted`, raised when the pool circuit
     has been open for ``max_circuit_waits`` consecutive cycles or when
     ``max_retries`` have been spent without a 200.
+
+    Optional ``tools`` (e.g. ``[{"google_search": {}}]`` for Google Search
+    grounding) and ``system_instruction`` (top-level system prompt) are
+    forwarded into the REST request body when provided.
     """
     mgr = manager if manager is not None else await _get_default_manager()
     http = client if client is not None else _get_default_client()
 
-    payload = {
+    payload: dict[str, object] = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": generation_config or {},
     }
+    if tools is not None:
+        payload["tools"] = tools
+    if system_instruction is not None:
+        payload["system_instruction"] = {
+            "parts": [{"text": system_instruction}],
+        }
 
     attempt = 0
     circuit_waits = 0
