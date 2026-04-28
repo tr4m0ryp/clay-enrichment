@@ -17,9 +17,9 @@ from uuid import UUID
 
 from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
-from src.discovery.title_filter import is_relevant_title
-from src.models.gemini import GeminiClient
-from src.prompts.person_research import RESEARCH_PERSON_GROUNDED
+from src.people.title_filter import is_relevant_title
+from src.gemini.client import GeminiClient
+from src.person_research.prompts import RESEARCH_PERSON_GROUNDED
 
 logger = logging.getLogger(__name__)
 

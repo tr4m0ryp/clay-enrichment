@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from src.discovery.smtp_verify.types import (
+from src.people.smtp_verify.types import (
     HELO_DOMAIN,
     MAIL_FROM,
     SMTP_TIMEOUT,

@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from src.prompts.enrichment import ENRICH_COMPANY
+from src.enrichment.prompts.base import ENRICH_COMPANY
 
 logger = logging.getLogger(__name__)
 

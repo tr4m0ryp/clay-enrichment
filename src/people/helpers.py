@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from urllib.parse import urlparse
 
-from src.discovery.smtp_verify import SMTPVerifier
+from src.people.smtp_verify import SMTPVerifier
 
 logger = logging.getLogger(__name__)
 

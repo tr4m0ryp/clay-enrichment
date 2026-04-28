@@ -1,12 +1,12 @@
 """
 Tests for Layer 4: email generation helpers.
 
-Covers the low-level context-building helpers in src.layers.email_context.
+Covers the low-level context-building helpers in src.email.context.
 The higher-level generate_emails_for_company flow is tested via manual
 integration runs because its signature depends on DB instances.
 """
 
-from src.layers.email_context import (
+from src.email.context import (
     build_contact_context,
     build_company_context,
     group_junction_entries_by_company,

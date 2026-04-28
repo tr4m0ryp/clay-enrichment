@@ -42,7 +42,7 @@ sys.modules["google.genai.types"] = _genai_types_stub
 
 # Now it is safe to import GeminiClient. src.utils.logger exists in the
 # real package and has no heavy imports, so it does not need stubbing.
-from src.models.gemini import GeminiClient  # noqa: E402
+from src.gemini.client import GeminiClient  # noqa: E402
 
 # Keep a reference so tests can swap out Client/GenerateContentConfig
 _genai = sys.modules["google.genai"]

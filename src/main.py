@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from src.config import get_config, Config
 from src.utils.logger import setup_logging, get_logger
 from src.utils.rate_limiter import RateLimiter, DEFAULT_LIMITS
-from src.models.gemini import GeminiClient
+from src.gemini.client import GeminiClient
 from src.db.connection import get_pool, close_pool
 from src.db.campaigns import CampaignsDB
 from src.db.companies import CompaniesDB
@@ -27,23 +27,23 @@ from src.db.contact_campaigns import ContactCampaignsDB
 from src.search.brave_search import BraveSearchClient
 from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
-from src.discovery.contact_finder import ContactFinder
-from src.discovery.email_permutation import EmailPermutator
-from src.discovery.smtp_verify import SMTPVerifier
-from src.layers.discovery import (
+from src.people.contact_finder import ContactFinder
+from src.people.email_permutation import EmailPermutator
+from src.people.smtp_verify import SMTPVerifier
+from src.discovery.worker import (
     discovery_worker,
     DBClients as DiscoveryDBClients,
 )
-from src.layers.enrichment import enrichment_worker
-from src.layers.people import (
+from src.enrichment.worker import enrichment_worker
+from src.people.worker import (
     people_worker,
     DBClients as PeopleDBClients,
 )
-from src.layers.person_research import person_research_worker
-from src.layers.campaign_scoring import campaign_scoring_worker
-from src.layers.email_gen import email_gen_worker
+from src.person_research.worker import person_research_worker
+from src.scoring.worker import campaign_scoring_worker
+from src.email.gen import email_gen_worker
 from src.email.sender import email_sender_worker
-from src.layers.dashboard_worker import dashboard_stats_worker
+from src.dashboard.worker import dashboard_stats_worker
 
 logger: logging.Logger | None = None
 

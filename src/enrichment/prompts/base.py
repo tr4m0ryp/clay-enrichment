@@ -11,8 +11,8 @@ Legacy single-pass prompt retained as _ENRICH_COMPANY_LEGACY.
 from src.prompts.base_context import build_system_prompt
 
 # Re-export new two-step prompts from split files
-from src.prompts.enrichment_research import RESEARCH_COMPANY_GROUNDED  # noqa: F401
-from src.prompts.enrichment_structure import STRUCTURE_COMPANY_ENRICHMENT  # noqa: F401
+from src.enrichment.prompts.research import RESEARCH_COMPANY_GROUNDED  # noqa: F401
+from src.enrichment.prompts.structure import STRUCTURE_COMPANY_ENRICHMENT  # noqa: F401
 
 # --- DEPRECATED ---
 # _ENRICH_COMPANY_LEGACY is the original single-pass enrichment prompt.

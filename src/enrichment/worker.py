@@ -12,13 +12,13 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from src.prompts.enrichment import (
+from src.enrichment.prompts.base import (
     RESEARCH_COMPANY_GROUNDED,
     STRUCTURE_COMPANY_ENRICHMENT,
 )
-from src.prompts.website_lookup import FIND_COMPANY_WEBSITE
+from src.enrichment.prompts.website_lookup import FIND_COMPANY_WEBSITE
 from src.search.website_resolver import resolve_website
-from src.layers.enrichment_helpers import (
+from src.enrichment.helpers import (
     build_enrichment_text,
     build_properties_update,
     scrape_fallback,
