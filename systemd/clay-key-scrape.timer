@@ -1,9 +1,9 @@
 [Unit]
-Description=Clay key scrape every 10 minutes
+Description=Hourly clay key scrape
 
 [Timer]
-OnCalendar=*:0/10
-RandomizedDelaySec=60
+OnCalendar=hourly
+RandomizedDelaySec=300
 Persistent=true
 
 [Install]
