@@ -1,9 +1,6 @@
-import postgres from "postgres";
+// Tombstone -- the previous postgres.js client lived here. All callers
+// now go through @/lib/queries (typed Supabase reads/writes) or
+// @/lib/supabase/server (raw clients). Keeping this re-export so any
+// stragglers still resolve to the new admin client.
 
-const connectionString = process.env.DATABASE_URL!;
-
-export const sql = postgres(connectionString, {
-  max: 5,
-  idle_timeout: 20,
-  connect_timeout: 10,
-});
+export { createSupabaseAdminClient } from "./supabase/server";
