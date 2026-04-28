@@ -7,6 +7,16 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 // API route, and the favicon. The /login page itself is allowed through so
 // the user can sign in.
 // ---------------------------------------------------------------------------
+// req.url carries the upstream listener (e.g. localhost:3000 behind nginx),
+// so building redirects from it leaks the internal host. req.nextUrl already
+// resolves Host/X-Forwarded-Host correctly -- clone it and swap pathname.
+function redirectTo(req: NextRequest, pathname: string) {
+  const url = req.nextUrl.clone();
+  url.pathname = pathname;
+  url.search = "";
+  return NextResponse.redirect(url);
+}
+
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next({ request: req });
 
@@ -16,7 +26,7 @@ export async function middleware(req: NextRequest) {
     // Fail closed -- if env is misconfigured, send everyone to /login so
     // we never accidentally serve unauthenticated dashboard pages.
     if (req.nextUrl.pathname.startsWith("/login")) return res;
-    return NextResponse.redirect(new URL("/login", req.url));
+    return redirectTo(req, "/login");
   }
 
   type CookieMutation = { name: string; value: string; options: CookieOptions };
@@ -38,10 +48,10 @@ export async function middleware(req: NextRequest) {
 
   const isLoginPath = req.nextUrl.pathname.startsWith("/login");
   if (!user && !isLoginPath) {
-    return NextResponse.redirect(new URL("/login", req.url));
+    return redirectTo(req, "/login");
   }
   if (user && isLoginPath) {
-    return NextResponse.redirect(new URL("/", req.url));
+    return redirectTo(req, "/");
   }
   return res;
 }
