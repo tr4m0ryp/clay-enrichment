@@ -16,7 +16,7 @@ from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
 from src.db.emails import EmailsDB
 from src.db.contact_campaigns import ContactCampaignsDB
-from src.layers.email_context import (
+from src.email.context import (
     build_contact_context,
     build_company_context,
     group_junction_entries_by_company,
@@ -98,7 +98,7 @@ async def generate_emails_for_company(
     if not entry_meta:
         return
 
-    from src.prompts.email import GENERATE_EMAIL
+    from src.email.prompts import GENERATE_EMAIL
 
     # Generate one email per contact using individual context
     for i, (junction_entry, contact_id, contact_name) in enumerate(entry_meta):

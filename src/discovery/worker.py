@@ -14,8 +14,8 @@ from typing import Any
 
 from src.db.campaigns import CampaignsDB
 from src.db.companies import CompaniesDB
-from src.models.gemini import GeminiClient
-from src.prompts.discovery import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
+from src.gemini.client import GeminiClient
+from src.discovery.prompts import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)

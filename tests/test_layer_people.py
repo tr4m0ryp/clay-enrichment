@@ -13,16 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.discovery.contact_finder import ContactFinder, RawContact
-from src.discovery.email_permutation import EmailPermutator
-from src.discovery.smtp_verify import SMTPVerifier, VerifyResult
-from src.layers.people import (
+from src.people.contact_finder import ContactFinder, RawContact
+from src.people.email_permutation import EmailPermutator
+from src.people.smtp_verify import SMTPVerifier, VerifyResult
+from src.people.worker import (
     DBClients,
     _is_duplicate_contact,
     _parse_contacts_with_gemini,
     discover_contacts_for_company,
 )
-from src.layers.people_helpers import (
+from src.people.helpers import (
     extract_domain as _extract_domain,
     split_name as _split_name,
     verify_email_waterfall as _verify_email_waterfall,

@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.layers.enrichment import enrichment_worker
-from src.layers.enrichment_helpers import (
+from src.enrichment.worker import enrichment_worker
+from src.enrichment.helpers import (
     build_enrichment_text,
     build_properties_update_pg,
     scrape_fallback,
@@ -263,8 +263,8 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
-             patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0), \
+             patch("src.enrichment.worker.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -295,8 +295,8 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
-             patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0), \
+             patch("src.enrichment.worker.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -343,8 +343,8 @@ class TestEnrichmentWorker:
 
         gemini.generate = AsyncMock(side_effect=_fallback_generate)
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
-             patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="https://testbrand.com")):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0), \
+             patch("src.enrichment.worker.resolve_website", AsyncMock(return_value="https://testbrand.com")):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -382,8 +382,8 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
-             patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="")):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0), \
+             patch("src.enrichment.worker.resolve_website", AsyncMock(return_value="")):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -414,8 +414,8 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0), \
-             patch("src.layers.enrichment.resolve_website", AsyncMock(return_value="")):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0), \
+             patch("src.enrichment.worker.resolve_website", AsyncMock(return_value="")):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -446,7 +446,7 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,
@@ -473,7 +473,7 @@ class TestEnrichmentWorker:
         campaigns_db = _make_campaigns_db()
         search_client = _make_search_client()
 
-        with patch("src.layers.enrichment.CYCLE_SLEEP_SECONDS", 0):
+        with patch("src.enrichment.worker.CYCLE_SLEEP_SECONDS", 0):
             task = asyncio.create_task(
                 enrichment_worker(
                     config, gemini,

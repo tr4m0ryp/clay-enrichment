@@ -14,16 +14,16 @@ from dataclasses import dataclass
 
 from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
-from src.discovery.contact_finder import ContactFinder
-from src.discovery.email_permutation import EmailPermutator
-from src.discovery.smtp_verify import SMTPVerifier
-from src.layers.people_helpers import (
+from src.people.contact_finder import ContactFinder
+from src.people.email_permutation import EmailPermutator
+from src.people.smtp_verify import SMTPVerifier
+from src.people.helpers import (
     extract_domain,
     split_name,
     verify_email_waterfall,
 )
-from src.models.gemini import GeminiClient
-from src.prompts.people import PARSE_CONTACT_RESULTS
+from src.gemini.client import GeminiClient
+from src.people.prompts import PARSE_CONTACT_RESULTS
 
 logger = logging.getLogger(__name__)
 

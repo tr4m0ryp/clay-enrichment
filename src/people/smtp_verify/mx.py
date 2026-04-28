@@ -6,7 +6,7 @@ import asyncio
 import logging
 import socket
 
-from src.discovery.smtp_verify.types import SMTP_TIMEOUT
+from src.people.smtp_verify.types import SMTP_TIMEOUT
 
 logger = logging.getLogger(__name__)
 

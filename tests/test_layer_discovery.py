@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.layers.discovery import (
+from src.discovery.worker import (
     DBClients,
     discover_companies_for_campaign,
     discovery_worker,
@@ -500,7 +500,7 @@ class TestDiscoveryWorker:
             if iteration_count >= 1:
                 raise KeyboardInterrupt("stop loop")
 
-        with patch("src.layers.discovery.asyncio.sleep", side_effect=_mock_sleep):
+        with patch("src.discovery.worker.asyncio.sleep", side_effect=_mock_sleep):
             with pytest.raises(KeyboardInterrupt):
                 await discovery_worker(config, gemini, db, search)
 
@@ -534,11 +534,11 @@ class TestDiscoveryWorker:
                 raise KeyboardInterrupt("stop loop")
 
         with patch(
-            "src.layers.discovery.discover_companies_for_campaign",
+            "src.discovery.worker.discover_companies_for_campaign",
             side_effect=_mock_discover,
         ):
             with patch(
-                "src.layers.discovery.asyncio.sleep",
+                "src.discovery.worker.asyncio.sleep",
                 side_effect=_mock_sleep,
             ):
                 with pytest.raises(KeyboardInterrupt):
@@ -566,7 +566,7 @@ class TestDiscoveryWorker:
             if call_count >= 1:
                 raise KeyboardInterrupt("stop loop")
 
-        with patch("src.layers.discovery.asyncio.sleep", side_effect=_mock_sleep):
+        with patch("src.discovery.worker.asyncio.sleep", side_effect=_mock_sleep):
             with pytest.raises(KeyboardInterrupt):
                 await discovery_worker(config, gemini, db, search)
 

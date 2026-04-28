@@ -3,7 +3,7 @@
 Public API: SMTPVerifier and the VerifyResult dataclass.
 """
 
-from src.discovery.smtp_verify.types import VerifyResult
-from src.discovery.smtp_verify.verifier import SMTPVerifier
+from src.people.smtp_verify.types import VerifyResult
+from src.people.smtp_verify.verifier import SMTPVerifier
 
 __all__ = ["SMTPVerifier", "VerifyResult"]

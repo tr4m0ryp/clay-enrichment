@@ -10,8 +10,8 @@ from src.db.campaigns import CampaignsDB
 from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
 from src.db.contact_campaigns import ContactCampaignsDB
-from src.models.gemini import GeminiClient
-from src.prompts.campaign_scoring import STRUCTURE_AND_SCORE_PERSON
+from src.gemini.client import GeminiClient
+from src.scoring.prompts import STRUCTURE_AND_SCORE_PERSON
 
 logger = logging.getLogger(__name__)
 MIN_DPP_FIT_SCORE = 7

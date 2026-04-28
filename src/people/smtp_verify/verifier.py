@@ -6,9 +6,9 @@ import asyncio
 import logging
 import time
 
-from src.discovery.smtp_verify.mx import resolve_mx
-from src.discovery.smtp_verify.protocol import smtp_check
-from src.discovery.smtp_verify.types import RATE_LIMIT_INTERVAL, VerifyResult
+from src.people.smtp_verify.mx import resolve_mx
+from src.people.smtp_verify.protocol import smtp_check
+from src.people.smtp_verify.types import RATE_LIMIT_INTERVAL, VerifyResult
 
 logger = logging.getLogger(__name__)
 
