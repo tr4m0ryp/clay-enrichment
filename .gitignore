@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 database/
+!src/api_keys/database/
 reports/
 notes/
 tasks/
