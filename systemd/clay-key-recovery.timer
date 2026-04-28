@@ -1,0 +1,10 @@
+[Unit]
+Description=Tier auto-recovery probe (4h cadence, D12)
+
+[Timer]
+OnCalendar=*-*-* 00:05,04:05,08:05,12:05,16:05,20:05
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

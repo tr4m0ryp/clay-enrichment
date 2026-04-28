@@ -1,0 +1,13 @@
+[Unit]
+Description=Clay key tier auto-recovery probe (D12)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clay
+WorkingDirectory=/opt/clay-enrichment
+EnvironmentFile=/opt/clay-enrichment/.env
+ExecStart=/opt/clay-enrichment/.venv/bin/python -m src.api_keys.cron.recovery_probe
+StandardOutput=journal
+StandardError=journal
