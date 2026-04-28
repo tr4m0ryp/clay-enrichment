@@ -34,13 +34,13 @@ class DBClients:
 async def discovery_worker(
     config,
     gemini_client: GeminiClient,
-    notion_clients: DBClients,
+    db_clients: DBClients,
     search_client: Any,
 ) -> None:
     """Continuous discovery loop. Runs forever, polling for active campaigns."""
     while True:
         try:
-            campaigns = await notion_clients.campaigns.get_active_campaigns()
+            campaigns = await db_clients.campaigns.get_active_campaigns()
             logger.info(
                 "Discovery cycle: found %d active campaigns", len(campaigns)
             )
@@ -52,7 +52,7 @@ async def discovery_worker(
         for campaign in campaigns:
             try:
                 await discover_companies_for_campaign(
-                    campaign, config, gemini_client, notion_clients, search_client
+                    campaign, config, gemini_client, db_clients, search_client
                 )
             except Exception:
                 campaign_name = campaign["name"]
@@ -68,7 +68,7 @@ async def discover_companies_for_campaign(
     campaign: dict,
     config,
     gemini_client: GeminiClient,
-    notion_clients: DBClients,
+    db_clients: DBClients,
     search_client: Any,
 ) -> None:
     """Run the full discovery pipeline for a single campaign."""
@@ -131,7 +131,7 @@ async def discover_companies_for_campaign(
 
     # -- Step 4: dedup and write to database ----------------------------------
     new_count, existing_count = await _write_companies(
-        notion_clients.companies, companies, str(campaign_id)
+        db_clients.companies, companies, str(campaign_id)
     )
 
     logger.info(

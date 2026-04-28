@@ -118,7 +118,7 @@ class TestAcquire:
             sleep_durations.append(duration)
 
         async def run():
-            with patch("src.utils.rate_limiter.time") as mock_time, \
+            with patch("src.utils.rate_limiter.limiter.time") as mock_time, \
                  patch("asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
                 mock_time.time = fake_time
                 await limiter.acquire("test-per-minute")
@@ -159,7 +159,7 @@ class TestAcquire:
             original_time[0] += 61.0
 
         async def worker():
-            with patch("src.utils.rate_limiter.time") as mock_t, \
+            with patch("src.utils.rate_limiter.limiter.time") as mock_t, \
                  patch("asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
                 mock_t.time = fake_time
                 await limiter.acquire("bounded")
@@ -184,47 +184,47 @@ class TestAcquire:
 
 
 # ---------------------------------------------------------------------------
-# Per-second limit (Notion)
+# Per-second limit
 # ---------------------------------------------------------------------------
 
 class TestPerSecondLimit:
-    def test_notion_per_second_ceiling(self):
+    def test_per_second_ceiling(self):
         """
-        Notion ceiling is 2.5 req/sec.  Adding 2 timestamps in the current
+        The per-second ceiling is 2.5 req/sec.  Adding 2 timestamps in the current
         second should fill the bucket (floor of 2.5 = still blocks at 2).
         """
         limiter = RateLimiter(limits={
-            "notion": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
+            "throttled": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
         })
 
         now = time.time()
-        limiter._buckets["notion"].append(now - 0.1)
-        limiter._buckets["notion"].append(now - 0.05)
+        limiter._buckets["throttled"].append(now - 0.1)
+        limiter._buckets["throttled"].append(now - 0.05)
 
         # Two requests in the window means count==2, ceiling==2.5 => can proceed
-        assert limiter.can_proceed("notion") is True
+        assert limiter.can_proceed("throttled") is True
 
         # Add a third => 3 >= 2.5 => cannot proceed
-        limiter._buckets["notion"].append(now - 0.01)
-        assert limiter.can_proceed("notion") is False
+        limiter._buckets["throttled"].append(now - 0.01)
+        assert limiter.can_proceed("throttled") is False
 
-    def test_notion_window_expires_after_one_second(self):
+    def test_window_expires_after_one_second(self):
         """Entries older than 1 second are purged and slots free up."""
         limiter = RateLimiter(limits={
-            "notion": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
+            "throttled": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
         })
 
         old = time.time() - 2.0  # well outside the 1s window
-        limiter._buckets["notion"].append(old)
-        limiter._buckets["notion"].append(old)
-        limiter._buckets["notion"].append(old)
+        limiter._buckets["throttled"].append(old)
+        limiter._buckets["throttled"].append(old)
+        limiter._buckets["throttled"].append(old)
 
-        assert limiter.can_proceed("notion") is True
+        assert limiter.can_proceed("throttled") is True
 
-    def test_notion_acquire_sleeps_at_ceiling(self):
-        """acquire() sleeps when the Notion per-second bucket is full."""
+    def test_acquire_sleeps_at_ceiling(self):
+        """acquire() sleeps when the per-second bucket is full."""
         limiter = RateLimiter(limits={
-            "notion": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
+            "throttled": RateLimitConfig(ceiling=2.5, window_seconds=1.0),
         })
 
         now_val = [time.time()]
@@ -244,15 +244,15 @@ class TestPerSecondLimit:
 
         # Fill bucket to ceiling
         t = now_val[0]
-        limiter._buckets["notion"].append(t - 0.3)
-        limiter._buckets["notion"].append(t - 0.2)
-        limiter._buckets["notion"].append(t - 0.1)
+        limiter._buckets["throttled"].append(t - 0.3)
+        limiter._buckets["throttled"].append(t - 0.2)
+        limiter._buckets["throttled"].append(t - 0.1)
 
         async def run():
-            with patch("src.utils.rate_limiter.time") as mock_t, \
+            with patch("src.utils.rate_limiter.limiter.time") as mock_t, \
                  patch("asyncio.sleep", new=AsyncMock(side_effect=wrapped_sleep)):
                 mock_t.time = fake_time
-                await limiter.acquire("notion")
+                await limiter.acquire("throttled")
 
         asyncio.run(run())
         assert len(sleep_called) >= 1
@@ -309,7 +309,7 @@ class TestDailyLimit:
             limiter._buckets["test-daily"].append(now_val[0] - 60)
 
         async def run():
-            with patch("src.utils.rate_limiter.time") as mock_t, \
+            with patch("src.utils.rate_limiter.limiter.time") as mock_t, \
                  patch("asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
                 mock_t.time = fake_time
                 await limiter.acquire("test-daily")
@@ -328,7 +328,6 @@ class TestDefaultLimits:
         ("gemini-flash", 120, 60.0),
         ("gemini-pro", 120, 60.0),
         ("google-custom-search", 80, 86400.0),
-        ("notion", 2.5, 1.0),
     ])
     def test_default_ceilings_are_80_percent(self, api_name, expected_ceiling, expected_window):
         """Default configs must match the 80% ceilings specified in the task."""
@@ -344,10 +343,6 @@ class TestDefaultLimits:
         """Gemini limits use per-minute sliding windows, not daily."""
         for name in ("gemini-flash-lite", "gemini-flash", "gemini-pro"):
             assert DEFAULT_LIMITS[name].is_daily is False
-
-    def test_notion_is_not_daily(self):
-        """Notion uses per-second sliding window, not daily."""
-        assert DEFAULT_LIMITS["notion"].is_daily is False
 
     def test_default_limiter_has_all_apis(self):
         """RateLimiter() with no args must accept all known API names."""
@@ -381,7 +376,7 @@ class TestConcurrency:
             clock[0] += 61.0  # advance past window
 
         async def worker():
-            with patch("src.utils.rate_limiter.time") as mock_t, \
+            with patch("src.utils.rate_limiter.limiter.time") as mock_t, \
                  patch("asyncio.sleep", new=AsyncMock(side_effect=fake_sleep)):
                 mock_t.time = fake_time
                 await limiter.acquire("shared")

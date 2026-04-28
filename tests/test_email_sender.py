@@ -19,7 +19,6 @@ from src.config import SenderAccount, Config
 from src.email.pool import (
     SenderPool,
     compute_delay as _compute_delay,
-    blocks_to_plain_text as _blocks_to_plain_text,
     is_business_hours,
 )
 from src.email.sender import (
@@ -258,56 +257,6 @@ class TestBusinessHours:
         with patch("src.email.pool.datetime") as mock_dt:
             mock_dt.now.return_value = fake_now
             assert is_business_hours() is False
-
-
-# -- Block-to-text tests (legacy helper, still in pool.py) --
-
-
-class TestBlocksToText:
-    """Test Notion block content extraction."""
-
-    def test_paragraph_extraction(self):
-        """Should extract paragraph text."""
-        blocks = [
-            {
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"plain_text": "Line one"}]
-                },
-            },
-            {
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"plain_text": "Line two"}]
-                },
-            },
-        ]
-        result = _blocks_to_plain_text(blocks)
-        assert result == "Line one\nLine two"
-
-    def test_empty_blocks(self):
-        """Should return empty string for no blocks."""
-        assert _blocks_to_plain_text([]) == ""
-
-    def test_mixed_block_types(self):
-        """Should handle heading and other block types."""
-        blocks = [
-            {
-                "type": "heading_1",
-                "heading_1": {
-                    "rich_text": [{"plain_text": "Title"}]
-                },
-            },
-            {
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"plain_text": "Body text"}]
-                },
-            },
-        ]
-        result = _blocks_to_plain_text(blocks)
-        assert "Title" in result
-        assert "Body text" in result
 
 
 # -- send_batch tests --

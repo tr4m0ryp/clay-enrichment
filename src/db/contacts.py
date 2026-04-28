@@ -1,8 +1,7 @@
 """
 Async Postgres operations for the contacts table.
 
-Replaces src/notion/databases_contacts.py with asyncpg queries
-against the contacts table defined in schema/001_init.sql.
+Queries the contacts table defined in schema/001_init.sql via asyncpg.
 
 Also manages contact_campaign_links (many-to-many join) so that
 every contact is linked to the campaign that discovered it.
@@ -22,8 +21,7 @@ class ContactsDB:
     """
     Typed CRUD operations for the contacts table.
 
-    Accepts a shared asyncpg pool and exposes the same method interface
-    as the Notion-backed ContactsDB it replaces.
+    Accepts a shared asyncpg pool.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:

@@ -2,7 +2,7 @@
 Tests for Layer 1: Company Discovery Worker.
 
 Covers the discovery worker loop, per-campaign flow, dedup logic,
-and error recovery with fully mocked Gemini, Notion, and Search clients.
+and error recovery with fully mocked Gemini, DB, and Search clients.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.layers.discovery import (
-    NotionClients,
+    DBClients,
     discover_companies_for_campaign,
     discovery_worker,
     _generate_search_queries,
@@ -53,12 +53,12 @@ def _make_config():
     return cfg
 
 
-def _make_notion_clients(
+def _make_db_clients(
     campaigns_return: list | None = None,
     find_by_name_return=None,
     create_company_return=None,
 ):
-    """Build a NotionClients mock with campaigns and companies stubs."""
+    """Build a DBClients mock with campaigns and companies stubs."""
     campaigns_db = AsyncMock()
     campaigns_db.get_active_campaigns = AsyncMock(
         return_value=campaigns_return or []
@@ -70,7 +70,7 @@ def _make_notion_clients(
         return_value=create_company_return or {"id": "new-company-id"}
     )
 
-    return NotionClients(campaigns=campaigns_db, companies=companies_db)
+    return DBClients(campaigns=campaigns_db, companies=companies_db)
 
 
 def _make_gemini_client(generate_return=None):
@@ -289,64 +289,64 @@ class TestWriteCompanies:
 
     @pytest.mark.asyncio
     async def test_creates_new_company(self):
-        notion = _make_notion_clients(find_by_name_return=None)
+        db = _make_db_clients(find_by_name_return=None)
         companies = [
             {"company_name": "NewBrand", "website_url": "https://new.com", "reasoning": "good fit"}
         ]
         new_count, existing_count = await _write_companies(
-            notion.companies, companies, "camp-1"
+            db.companies, companies, "camp-1"
         )
         assert new_count == 1
         assert existing_count == 0
-        notion.companies.create_company.assert_called_once()
+        db.companies.create_company.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_existing_company_counted(self):
         existing_page = _make_campaign(page_id="existing-co")
-        notion = _make_notion_clients(find_by_name_return=existing_page)
+        db = _make_db_clients(find_by_name_return=existing_page)
         companies = [
             {"company_name": "ExistingCo", "website_url": "", "reasoning": ""}
         ]
         new_count, existing_count = await _write_companies(
-            notion.companies, companies, "camp-1"
+            db.companies, companies, "camp-1"
         )
         assert existing_count == 1
         # create_company still called to handle campaign linking
-        assert notion.companies.create_company.call_count == 1
+        assert db.companies.create_company.call_count == 1
 
     @pytest.mark.asyncio
     async def test_skips_empty_names(self):
-        notion = _make_notion_clients()
+        db = _make_db_clients()
         companies = [
             {"company_name": "", "website_url": "", "reasoning": ""},
             {"company_name": "   ", "website_url": "", "reasoning": ""},
         ]
         new_count, existing_count = await _write_companies(
-            notion.companies, companies, "camp-1"
+            db.companies, companies, "camp-1"
         )
         assert new_count == 0
         assert existing_count == 0
-        notion.companies.find_by_name.assert_not_called()
+        db.companies.find_by_name.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handles_write_error(self):
-        notion = _make_notion_clients()
-        notion.companies.find_by_name = AsyncMock(
-            side_effect=Exception("Notion API error")
+        db = _make_db_clients()
+        db.companies.find_by_name = AsyncMock(
+            side_effect=Exception("DB error")
         )
         companies = [
             {"company_name": "FailCo", "website_url": "", "reasoning": ""},
             {"company_name": "OKCo", "website_url": "", "reasoning": ""},
         ]
         # Second call succeeds
-        notion.companies.find_by_name = AsyncMock(
+        db.companies.find_by_name = AsyncMock(
             side_effect=[Exception("fail"), None]
         )
-        notion.companies.create_company = AsyncMock(
+        db.companies.create_company = AsyncMock(
             return_value={"id": "ok-co-id"}
         )
         new_count, existing_count = await _write_companies(
-            notion.companies, companies, "camp-1"
+            db.companies, companies, "camp-1"
         )
         # First fails, second succeeds
         assert new_count == 1
@@ -356,11 +356,11 @@ class TestWriteCompanies:
     async def test_multiple_companies_mixed(self):
         existing_page = _make_campaign(page_id="existing-co")
 
-        notion = _make_notion_clients()
-        notion.companies.find_by_name = AsyncMock(
+        db = _make_db_clients()
+        db.companies.find_by_name = AsyncMock(
             side_effect=[None, existing_page, None]
         )
-        notion.companies.create_company = AsyncMock(
+        db.companies.create_company = AsyncMock(
             return_value={"id": "new-id"}
         )
 
@@ -371,7 +371,7 @@ class TestWriteCompanies:
         ]
 
         new_count, existing_count = await _write_companies(
-            notion.companies, companies, "camp-1"
+            db.companies, companies, "camp-1"
         )
         assert new_count == 2
         assert existing_count == 1
@@ -409,14 +409,14 @@ class TestDiscoverCompaniesForCampaign:
             ]
         )
 
-        notion = _make_notion_clients(find_by_name_return=None)
+        db = _make_db_clients(find_by_name_return=None)
 
         await discover_companies_for_campaign(
-            campaign, config, gemini, notion, search
+            campaign, config, gemini, db, search
         )
 
-        notion.companies.create_company.assert_called_once()
-        call_kwargs = notion.companies.create_company.call_args.kwargs
+        db.companies.create_company.assert_called_once()
+        call_kwargs = db.companies.create_company.call_args.kwargs
         assert call_kwargs["name"] == "BrandX"
         assert call_kwargs["campaign_id"] == "camp-1"
 
@@ -426,10 +426,10 @@ class TestDiscoverCompaniesForCampaign:
         config = _make_config()
         gemini = _make_gemini_client()
         search = _make_search_client()
-        notion = _make_notion_clients()
+        db = _make_db_clients()
 
         await discover_companies_for_campaign(
-            campaign, config, gemini, notion, search
+            campaign, config, gemini, db, search
         )
 
         # Gemini should never be called if there is no target
@@ -443,10 +443,10 @@ class TestDiscoverCompaniesForCampaign:
             generate_return={"text": "[]", "input_tokens": 0, "output_tokens": 0}
         )
         search = _make_search_client()
-        notion = _make_notion_clients()
+        db = _make_db_clients()
 
         await discover_companies_for_campaign(
-            campaign, config, gemini, notion, search
+            campaign, config, gemini, db, search
         )
 
         search.search.assert_not_called()
@@ -463,10 +463,10 @@ class TestDiscoverCompaniesForCampaign:
             }
         )
         search = _make_search_client(search_return=[])
-        notion = _make_notion_clients()
+        db = _make_db_clients()
 
         await discover_companies_for_campaign(
-            campaign, config, gemini, notion, search
+            campaign, config, gemini, db, search
         )
 
         # Only query generation call, no parse call
@@ -488,7 +488,7 @@ class TestDiscoveryWorker:
         config = _make_config()
         gemini = _make_gemini_client()
         search = _make_search_client()
-        notion = _make_notion_clients(campaigns_return=[campaign])
+        db = _make_db_clients(campaigns_return=[campaign])
 
         iteration_count = 0
 
@@ -502,9 +502,9 @@ class TestDiscoveryWorker:
 
         with patch("src.layers.discovery.asyncio.sleep", side_effect=_mock_sleep):
             with pytest.raises(KeyboardInterrupt):
-                await discovery_worker(config, gemini, notion, search)
+                await discovery_worker(config, gemini, db, search)
 
-        notion.campaigns.get_active_campaigns.assert_called_once()
+        db.campaigns.get_active_campaigns.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_error_in_one_campaign_does_not_stop_others(self):
@@ -515,7 +515,7 @@ class TestDiscoveryWorker:
 
         call_count = 0
 
-        async def _mock_discover(campaign, cfg, gem, notion, search):
+        async def _mock_discover(campaign, cfg, gem, db, search):
             nonlocal call_count
             call_count += 1
             if campaign["id"] == "c1":
@@ -523,7 +523,7 @@ class TestDiscoveryWorker:
 
         gemini = _make_gemini_client()
         search = _make_search_client()
-        notion = _make_notion_clients(campaigns_return=[camp1, camp2])
+        db = _make_db_clients(campaigns_return=[camp1, camp2])
 
         iteration_count = 0
 
@@ -542,7 +542,7 @@ class TestDiscoveryWorker:
                 side_effect=_mock_sleep,
             ):
                 with pytest.raises(KeyboardInterrupt):
-                    await discovery_worker(config, gemini, notion, search)
+                    await discovery_worker(config, gemini, db, search)
 
         # Both campaigns should have been attempted
         assert call_count == 2
@@ -553,11 +553,11 @@ class TestDiscoveryWorker:
         config = _make_config()
         gemini = _make_gemini_client()
         search = _make_search_client()
-        notion = _make_notion_clients()
+        db = _make_db_clients()
 
         call_count = 0
-        notion.campaigns.get_active_campaigns = AsyncMock(
-            side_effect=Exception("Notion down")
+        db.campaigns.get_active_campaigns = AsyncMock(
+            side_effect=Exception("DB down")
         )
 
         async def _mock_sleep(seconds):
@@ -568,7 +568,7 @@ class TestDiscoveryWorker:
 
         with patch("src.layers.discovery.asyncio.sleep", side_effect=_mock_sleep):
             with pytest.raises(KeyboardInterrupt):
-                await discovery_worker(config, gemini, notion, search)
+                await discovery_worker(config, gemini, db, search)
 
         # Sleep was called (recovery path)
         assert call_count >= 1

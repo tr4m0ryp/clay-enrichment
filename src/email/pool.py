@@ -50,28 +50,6 @@ def compute_delay(min_delay: int, max_delay: int) -> float:
     return max(0.0, base + jitter)
 
 
-def blocks_to_plain_text(blocks: list[dict]) -> str:
-    """
-    Extract plain text from Notion page body blocks.
-
-    Concatenates the plain_text from paragraph-type blocks,
-    separated by newlines.
-
-    Args:
-        blocks: List of Notion block objects.
-
-    Returns:
-        The combined plain text content.
-    """
-    lines: list[str] = []
-    for block in blocks:
-        block_type = block.get("type", "")
-        type_data = block.get(block_type, {})
-        rich_texts = type_data.get("rich_text", [])
-        line = "".join(rt.get("plain_text", "") for rt in rich_texts)
-        if line:
-            lines.append(line)
-    return "\n".join(lines)
 
 
 @dataclass

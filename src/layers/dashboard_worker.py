@@ -2,8 +2,7 @@
 Dashboard stats logging worker.
 
 Periodic async loop that computes per-campaign statistics via SQL
-count queries and logs them. The Notion dashboard block update logic
-has been removed -- the Next.js frontend replaces it.
+count queries and logs them. The Next.js frontend renders the dashboard.
 """
 
 import asyncio

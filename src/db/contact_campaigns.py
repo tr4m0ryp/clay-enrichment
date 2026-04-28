@@ -1,8 +1,8 @@
 """
 Async CRUD operations for the contact_campaigns junction table.
 
-Replaces src/notion/databases_contact_campaigns.py with asyncpg queries
-against the Postgres contact_campaigns table (see schema/001_init.sql).
+Queries the Postgres contact_campaigns table (see schema/001_init.sql)
+via asyncpg.
 
 Each record pairs one contact with one campaign, storing campaign-specific
 relevance score, personalized context, and outreach status. Dedup is
@@ -46,7 +46,7 @@ class ContactCampaignsDB:
     Typed operations for the contact_campaigns junction table.
 
     Accepts an asyncpg connection pool in __init__. All methods are async
-    and return plain dicts (matching the Notion-era interface).
+    and return plain dicts.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:

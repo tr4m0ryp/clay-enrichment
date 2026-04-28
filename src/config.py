@@ -33,16 +33,6 @@ class Config:
     # Brave Search API
     brave_search_api_key: str = ""
 
-    # Notion
-    notion_api_key: str = ""
-    notion_hub_page_id: str = ""
-    notion_campaigns_db_id: str = ""
-    notion_companies_db_id: str = ""
-    notion_contacts_db_id: str = ""
-    notion_emails_db_id: str = ""
-    notion_contact_campaigns_db_id: str = ""
-    notion_leads_page_id: str = ""
-
     # Email
     smtp_host: str = ""
     smtp_port: int = 587
@@ -86,14 +76,6 @@ def _load_config() -> Config:
         google_cse_id=os.environ.get("GOOGLE_CSE_ID", "").strip(),
         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888").strip(),
         brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
-        notion_api_key=os.environ.get("NOTION_API_KEY", "").strip(),
-        notion_hub_page_id=os.environ.get("NOTION_HUB_PAGE_ID", "").strip(),
-        notion_campaigns_db_id=os.environ.get("NOTION_CAMPAIGNS_DB_ID", "").strip(),
-        notion_companies_db_id=os.environ.get("NOTION_COMPANIES_DB_ID", "").strip(),
-        notion_contacts_db_id=os.environ.get("NOTION_CONTACTS_DB_ID", "").strip(),
-        notion_emails_db_id=os.environ.get("NOTION_EMAILS_DB_ID", "").strip(),
-        notion_contact_campaigns_db_id=os.environ.get("NOTION_CONTACT_CAMPAIGNS_DB_ID", "").strip(),
-        notion_leads_page_id=os.environ.get("NOTION_LEADS_PAGE_ID", "").strip(),
         smtp_host=os.environ.get("SMTP_HOST", "").strip(),
         smtp_port=int(os.environ.get("SMTP_PORT", "587")),
         senders=_discover_senders(),
