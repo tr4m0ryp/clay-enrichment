@@ -12,13 +12,12 @@ from uuid import UUID
 
 import asyncpg
 
-from src.api_keys.types import KeyValidationResult, ValidationStatus
-
 from src.api_keys.database._internal import (
     AUTO_DISABLE_STATUS,
     capabilities_to_dict,
     encode_json,
 )
+from src.api_keys.types import KeyValidationResult, ValidationStatus
 
 
 async def upsert_validated_key(
