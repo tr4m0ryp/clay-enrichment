@@ -7,14 +7,13 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 // API route, and the favicon. The /login page itself is allowed through so
 // the user can sign in.
 // ---------------------------------------------------------------------------
-// req.url carries the upstream listener (e.g. localhost:3000 behind nginx),
-// so building redirects from it leaks the internal host. req.nextUrl already
-// resolves Host/X-Forwarded-Host correctly -- clone it and swap pathname.
+// Behind a reverse proxy (nginx -> next start --hostname 127.0.0.1), neither
+// req.url nor req.nextUrl reflect the public host. Build the redirect URL
+// from the forwarded headers so the Location points at the public origin.
 function redirectTo(req: NextRequest, pathname: string) {
-  const url = req.nextUrl.clone();
-  url.pathname = pathname;
-  url.search = "";
-  return NextResponse.redirect(url);
+  const proto = req.headers.get("x-forwarded-proto") ?? "http";
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? req.nextUrl.host;
+  return NextResponse.redirect(`${proto}://${host}${pathname}`);
 }
 
 export async function middleware(req: NextRequest) {
