@@ -12,9 +12,8 @@ from uuid import UUID
 
 import asyncpg
 
-from src.api_keys.types import ScrapedKey, ValidationStatus
-
 from src.api_keys.database._internal import encode_json
+from src.api_keys.types import ScrapedKey, ValidationStatus
 
 
 async def insert_potential_key(
