@@ -1,7 +1,6 @@
 """
 Async CRUD operations for the companies table using asyncpg.
 
-Replaces src/notion/databases_companies.py with direct Postgres access.
 Handles dedup logic, campaign linking via company_campaigns join table,
 and body text storage.
 """

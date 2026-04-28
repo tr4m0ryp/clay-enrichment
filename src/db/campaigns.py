@@ -1,8 +1,7 @@
 """
 Async Postgres operations for the campaigns table.
 
-Replaces src/notion/databases_campaigns.py with asyncpg queries
-against the campaigns table defined in schema/001_init.sql.
+Queries the campaigns table defined in schema/001_init.sql via asyncpg.
 """
 
 import logging
@@ -19,8 +18,7 @@ class CampaignsDB:
     """
     Typed CRUD operations for the campaigns table.
 
-    Accepts a shared asyncpg pool and exposes the same method interface
-    as the Notion-backed CampaignsDB it replaces.
+    Accepts a shared asyncpg pool.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:

@@ -1,6 +1,6 @@
 -- 001_init.sql -- Postgres schema for clay-enrichment pipeline
--- Replaces the Notion database structure with 5 main tables,
--- 2 join tables, indexes, CHECK constraints, and an auto-updated_at trigger.
+-- 5 main tables, 2 join tables, indexes, CHECK constraints,
+-- and an auto-updated_at trigger.
 
 BEGIN;
 

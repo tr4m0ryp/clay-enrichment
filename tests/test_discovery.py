@@ -240,9 +240,7 @@ class TestSMTPVerifier:
 
     def test_no_mx_records(self) -> None:
         """Domain with no MX records should return invalid + high confidence."""
-        with patch.object(
-            self.verifier, "_resolve_mx", new_callable=AsyncMock
-        ) as mock_mx:
+        with patch("src.discovery.smtp_verify.verifier.resolve_mx", new_callable=AsyncMock) as mock_mx:
             mock_mx.return_value = []
 
             result = asyncio.run(
@@ -255,11 +253,7 @@ class TestSMTPVerifier:
 
     def test_smtp_250_valid(self) -> None:
         """SMTP 250 response should mark email as valid."""
-        with patch.object(
-            self.verifier, "_resolve_mx", new_callable=AsyncMock
-        ) as mock_mx, patch.object(
-            self.verifier, "_smtp_check", new_callable=AsyncMock
-        ) as mock_smtp:
+        with patch("src.discovery.smtp_verify.verifier.resolve_mx", new_callable=AsyncMock) as mock_mx, patch("src.discovery.smtp_verify.verifier.smtp_check", new_callable=AsyncMock) as mock_smtp:
             mock_mx.return_value = ["mx.example.com"]
             mock_smtp.return_value = VerifyResult(
                 email="real@example.com",
@@ -278,11 +272,7 @@ class TestSMTPVerifier:
 
     def test_smtp_550_invalid(self) -> None:
         """SMTP 550 response should mark email as invalid."""
-        with patch.object(
-            self.verifier, "_resolve_mx", new_callable=AsyncMock
-        ) as mock_mx, patch.object(
-            self.verifier, "_smtp_check", new_callable=AsyncMock
-        ) as mock_smtp:
+        with patch("src.discovery.smtp_verify.verifier.resolve_mx", new_callable=AsyncMock) as mock_mx, patch("src.discovery.smtp_verify.verifier.smtp_check", new_callable=AsyncMock) as mock_smtp:
             mock_mx.return_value = ["mx.example.com"]
             mock_smtp.return_value = VerifyResult(
                 email="fake@example.com",
@@ -301,11 +291,7 @@ class TestSMTPVerifier:
 
     def test_catch_all_low_confidence(self) -> None:
         """Catch-all domains should be marked as low confidence."""
-        with patch.object(
-            self.verifier, "_resolve_mx", new_callable=AsyncMock
-        ) as mock_mx, patch.object(
-            self.verifier, "_smtp_check", new_callable=AsyncMock
-        ) as mock_smtp:
+        with patch("src.discovery.smtp_verify.verifier.resolve_mx", new_callable=AsyncMock) as mock_mx, patch("src.discovery.smtp_verify.verifier.smtp_check", new_callable=AsyncMock) as mock_smtp:
             mock_mx.return_value = ["mx.catchall.com"]
             mock_smtp.return_value = VerifyResult(
                 email="anyone@catchall.com",
@@ -324,11 +310,7 @@ class TestSMTPVerifier:
 
     def test_all_mx_unreachable(self) -> None:
         """If all MX hosts fail, should return unknown + low confidence."""
-        with patch.object(
-            self.verifier, "_resolve_mx", new_callable=AsyncMock
-        ) as mock_mx, patch.object(
-            self.verifier, "_smtp_check", new_callable=AsyncMock
-        ) as mock_smtp:
+        with patch("src.discovery.smtp_verify.verifier.resolve_mx", new_callable=AsyncMock) as mock_mx, patch("src.discovery.smtp_verify.verifier.smtp_check", new_callable=AsyncMock) as mock_smtp:
             mock_mx.return_value = ["mx1.example.com", "mx2.example.com"]
             mock_smtp.return_value = None  # both unreachable
 

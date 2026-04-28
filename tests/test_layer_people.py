@@ -1,7 +1,7 @@
 """Tests for the Layer 3 people discovery worker.
 
 Covers the full contact discovery pipeline with mocked external
-dependencies: Notion, Gemini, Google search, email permutation,
+dependencies: DB, Gemini, Google search, email permutation,
 and SMTP verification.
 """
 
@@ -17,7 +17,7 @@ from src.discovery.contact_finder import ContactFinder, RawContact
 from src.discovery.email_permutation import EmailPermutator
 from src.discovery.smtp_verify import SMTPVerifier, VerifyResult
 from src.layers.people import (
-    NotionClients,
+    DBClients,
     _is_duplicate_contact,
     _parse_contacts_with_gemini,
     discover_contacts_for_company,
@@ -296,7 +296,7 @@ class TestDiscoverContactsForCompany:
             return_value={"id": "new-contact-001"}
         )
 
-        notion_clients = NotionClients(
+        db_clients = DBClients(
             companies=companies_db, contacts=contacts_db
         )
 
@@ -327,27 +327,27 @@ class TestDiscoverContactsForCompany:
         company = _make_company_page()
 
         return (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         )
 
     def test_creates_contact_with_verified_email(self) -> None:
         """Full flow should create a contact with a verified email."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
         assert count == 1
-        notion_clients.contacts.create_contact.assert_called_once()
-        call_kwargs = notion_clients.contacts.create_contact.call_args
+        db_clients.contacts.create_contact.assert_called_once()
+        call_kwargs = db_clients.contacts.create_contact.call_args
         assert call_kwargs.kwargs["name"] == "Jane Smith"
         assert call_kwargs.kwargs["email_verified"] is True
         assert call_kwargs.kwargs["company_id"] == "comp-001"
@@ -356,49 +356,49 @@ class TestDiscoverContactsForCompany:
     def test_updates_company_status(self) -> None:
         """Should set company status to 'Contacts Found' after processing."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
         asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
-        notion_clients.companies.update_company.assert_called_once()
-        update_args = notion_clients.companies.update_company.call_args
+        db_clients.companies.update_company.assert_called_once()
+        update_args = db_clients.companies.update_company.call_args
         assert update_args.args[0] == "comp-001"
         props = update_args.args[1]
         assert props["status"] == "Contacts Found"
 
     def test_skips_duplicate_contacts(self) -> None:
-        """Contacts already in Notion for this company should be skipped."""
+        """Contacts already in DB for this company should be skipped."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
         # Pre-populate with existing contact
-        notion_clients.contacts.get_contacts_for_company = AsyncMock(
+        db_clients.contacts.get_contacts_for_company = AsyncMock(
             return_value=[_make_contact_page(name="Jane Smith")]
         )
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
         assert count == 0
-        notion_clients.contacts.create_contact.assert_not_called()
+        db_clients.contacts.create_contact.assert_not_called()
 
     def test_unverified_contact_still_created(self) -> None:
         """Contact should still be created if no email verifies."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
@@ -411,13 +411,13 @@ class TestDiscoverContactsForCompany:
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
         assert count == 1
-        call_kwargs = notion_clients.contacts.create_contact.call_args
+        call_kwargs = db_clients.contacts.create_contact.call_args
         assert call_kwargs.kwargs["email_verified"] is False
         # Should still have an email (best guess)
         assert call_kwargs.kwargs["email_addr"] != ""
@@ -425,7 +425,7 @@ class TestDiscoverContactsForCompany:
     def test_no_contacts_found(self) -> None:
         """Should handle zero contacts gracefully."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
@@ -436,20 +436,20 @@ class TestDiscoverContactsForCompany:
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
         assert count == 0
-        notion_clients.contacts.create_contact.assert_not_called()
+        db_clients.contacts.create_contact.assert_not_called()
         # Status should still be updated
-        notion_clients.companies.update_company.assert_called_once()
+        db_clients.companies.update_company.assert_called_once()
 
     def test_error_recovery_per_contact(self) -> None:
         """Error on one contact should not prevent processing others."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
@@ -475,16 +475,16 @@ class TestDiscoverContactsForCompany:
             nonlocal call_count
             call_count += 1
             if kwargs["name"] == "Bad Contact":
-                raise RuntimeError("Notion API error")
+                raise RuntimeError("DB error")
             return {"id": "new-contact-002"}
 
-        notion_clients.contacts.create_contact = AsyncMock(
+        db_clients.contacts.create_contact = AsyncMock(
             side_effect=create_with_failure
         )
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
@@ -492,12 +492,12 @@ class TestDiscoverContactsForCompany:
         # Only the good contact should count
         assert count == 1
         # Company status should still be updated despite the error
-        notion_clients.companies.update_company.assert_called_once()
+        db_clients.companies.update_company.assert_called_once()
 
     def test_no_domain_skips_email(self) -> None:
         """Company without a website should skip email generation."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
@@ -506,13 +506,13 @@ class TestDiscoverContactsForCompany:
 
         count = asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
         assert count == 1
-        call_kwargs = notion_clients.contacts.create_contact.call_args
+        call_kwargs = db_clients.contacts.create_contact.call_args
         # No email should be set since no domain available
         assert call_kwargs.kwargs["email_addr"] == ""
         assert call_kwargs.kwargs["email_verified"] is False
@@ -520,9 +520,9 @@ class TestDiscoverContactsForCompany:
         smtp_verifier.verify.assert_not_called()
 
     def test_contact_with_linkedin_url(self) -> None:
-        """LinkedIn URL from Gemini parsing should be passed to Notion."""
+        """LinkedIn URL from Gemini parsing should be passed to the DB layer."""
         (
-            company, gemini, notion_clients,
+            company, gemini, db_clients,
             contact_finder, email_permutator, smtp_verifier,
         ) = self._build_deps()
 
@@ -537,10 +537,10 @@ class TestDiscoverContactsForCompany:
 
         asyncio.run(
             discover_contacts_for_company(
-                company, gemini, notion_clients,
+                company, gemini, db_clients,
                 contact_finder, email_permutator, smtp_verifier,
             )
         )
 
-        call_kwargs = notion_clients.contacts.create_contact.call_args
+        call_kwargs = db_clients.contacts.create_contact.call_args
         assert call_kwargs.kwargs["linkedin_url"] == "https://linkedin.com/in/janesmith"

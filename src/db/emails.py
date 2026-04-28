@@ -1,8 +1,7 @@
 """
 Async Postgres operations for the emails table.
 
-Replaces src/notion/databases_emails.py with asyncpg queries
-against the emails table defined in schema/001_init.sql.
+Queries the emails table defined in schema/001_init.sql via asyncpg.
 """
 
 import logging
@@ -19,8 +18,7 @@ class EmailsDB:
     """
     Typed CRUD operations for the emails table.
 
-    Accepts a shared asyncpg pool and exposes the same method interface
-    as the Notion-backed EmailsDB it replaces.
+    Accepts a shared asyncpg pool.
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:
