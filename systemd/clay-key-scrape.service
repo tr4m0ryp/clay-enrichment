@@ -1,0 +1,13 @@
+[Unit]
+Description=Clay key scraper (github code search)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clay
+WorkingDirectory=/opt/clay-enrichment
+EnvironmentFile=/opt/clay-enrichment/.env
+ExecStart=/opt/clay-enrichment/.venv/bin/python -m src.api_keys.cron.scrape
+StandardOutput=journal
+StandardError=journal

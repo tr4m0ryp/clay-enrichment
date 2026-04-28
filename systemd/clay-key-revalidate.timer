@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily revalidation of validated_keys
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
