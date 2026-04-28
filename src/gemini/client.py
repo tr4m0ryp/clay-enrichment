@@ -21,10 +21,10 @@ compatibility with existing call sites but are no longer authoritative:
 the pool picks the tier-appropriate model and the chokepoint's circuit
 breaker subsumes the legacy rate limiter.
 
-Note: ``grounding=True`` (Google Search grounding) is not currently
-plumbed through ``gemini_generate_content``. Calls made with
-``grounding=True`` still execute, but without grounding tools attached;
-the response text is the model's ungrounded answer.
+When ``grounding=True``, the call attaches ``tools=[{"google_search": {}}]``
+to the REST request, restoring Google Search grounding parity with the
+legacy SDK-based client. The system prompt is forwarded as a top-level
+``system_instruction`` rather than concatenated into the user text.
 """
 
 from __future__ import annotations
@@ -73,18 +73,26 @@ def _build_generation_config(
     return cfg
 
 
-def _compose_prompt(prompt: str, user_message: str) -> str:
-    """Concatenate system instruction and user message into a single text.
+_GOOGLE_SEARCH_TOOL: list[dict] = [{"google_search": {}}]
 
-    The pool chokepoint exposes a single-text prompt parameter, not
-    a system_instruction field. We preserve the legacy two-part call
-    shape by stitching the system prompt above the user content.
+
+def _split_prompt(prompt: str, user_message: str) -> tuple[str | None, str]:
+    """Return ``(system_instruction, user_text)`` for the REST request.
+
+    Mirrors the legacy SDK split: the developer ``prompt`` becomes the
+    top-level ``system_instruction`` and ``user_message`` is the single
+    ``contents.parts.text``. If the system prompt is empty, returns
+    ``None`` so the chokepoint omits the field. If the user message is
+    empty, falls back to the system text alone (parity with the previous
+    concatenation behaviour for callers that pass only one string).
     """
     system_part = (prompt or "").strip()
     user_part = (user_message or "").strip()
     if system_part and user_part:
-        return f"{system_part}\n\n{user_part}"
-    return system_part or user_part
+        return system_part, user_part
+    if user_part:
+        return None, user_part
+    return None, system_part
 
 
 class GeminiClient:
@@ -140,17 +148,20 @@ class GeminiClient:
             cycle later.
         """
         requested_model = self._resolve_model(model)
-        full_prompt = _compose_prompt(prompt, user_message)
+        system_instruction, user_text = _split_prompt(prompt, user_message)
         gen_config = _build_generation_config(
             json_mode=json_mode,
             temperature=temperature,
             grounding=grounding,
         )
+        tools = _GOOGLE_SEARCH_TOOL if grounding else None
 
         try:
             response: GeminiResponse = await gemini_generate_content(
-                full_prompt,
+                user_text,
                 generation_config=gen_config,
+                tools=tools,
+                system_instruction=system_instruction,
             )
         except GeminiPoolExhausted:
             logger.warning(
