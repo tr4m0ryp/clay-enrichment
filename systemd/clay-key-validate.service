@@ -1,0 +1,13 @@
+[Unit]
+Description=Clay key validator (process pending potential_keys)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clay
+WorkingDirectory=/opt/clay-enrichment
+EnvironmentFile=/opt/clay-enrichment/.env
+ExecStart=/opt/clay-enrichment/.venv/bin/python -m src.api_keys.cron.validate
+StandardOutput=journal
+StandardError=journal
