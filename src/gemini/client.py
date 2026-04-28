@@ -1,42 +1,123 @@
+"""GeminiClient -- thin wrapper that routes every call through the api_keys pool.
+
+Per D10/D12, all Gemini traffic now goes through
+``src.api_keys.retry_with_fallback.gemini_generate_content``. Key selection,
+tier descent, per-key 429 rotation, and the pool-level circuit breaker are
+owned by ``KeyPoolManager`` -- this client never touches an env-var
+``GEMINI_API_KEY`` and never imports the legacy sliding-window rate
+limiter.
+
+Public surface preserved:
+    - class ``GeminiClient`` with ``__init__(config, rate_limiter=None)``
+    - ``GeminiClient.generate(prompt, user_message, model=None,
+      json_mode=False, temperature=0.1, grounding=False) -> dict``
+      returning ``{"text": str, "input_tokens": int, "output_tokens": int}``
+    - ``GeminiClient.generate_batch(prompt, items, model=None,
+      json_mode=True) -> dict`` returning
+      ``{"results": list, "input_tokens": int, "output_tokens": int}``
+
+The ``model`` and ``rate_limiter`` arguments are accepted for backward
+compatibility with existing call sites but are no longer authoritative:
+the pool picks the tier-appropriate model and the chokepoint's circuit
+breaker subsumes the legacy rate limiter.
+
+Note: ``grounding=True`` (Google Search grounding) is not currently
+plumbed through ``gemini_generate_content``. Calls made with
+``grounding=True`` still execute, but without grounding tools attached;
+the response text is the model's ungrounded answer.
+"""
+
+from __future__ import annotations
+
 import json
-import time
+from typing import Any
 
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
-
+from src.api_keys.retry_with_fallback import (
+    GeminiPoolExhausted,
+    GeminiResponse,
+    gemini_generate_content,
+)
 from src.utils.logger import get_logger
-from src.utils.rate_limiter import QuotaExhaustedError
+
 
 logger = get_logger(__name__)
 
 
-def _is_daily_quota_error(exc: Exception) -> bool:
-    """Detect whether a Gemini 429 is a per-day quota exhaustion."""
-    if not isinstance(exc, genai_errors.ClientError):
-        return False
-    if getattr(exc, "code", None) != 429:
-        return False
-    details = getattr(exc, "details", None) or {}
-    text = json.dumps(details) if isinstance(details, dict) else str(details)
-    # Free tier daily quota metrics look like:
-    # "generate_content_free_tier_requests" / "PerDayPerProjectPerModel"
-    return "PerDay" in text or "free_tier_requests" in text
+def _extract_token_counts(raw: dict) -> tuple[int, int]:
+    """Return ``(input_tokens, output_tokens)`` from a Gemini REST body."""
+    usage = raw.get("usageMetadata") if isinstance(raw, dict) else None
+    if not isinstance(usage, dict):
+        return 0, 0
+    prompt_count = usage.get("promptTokenCount") or 0
+    cand_count = usage.get("candidatesTokenCount") or 0
+    try:
+        return int(prompt_count), int(cand_count)
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+def _build_generation_config(
+    *, json_mode: bool, temperature: float, grounding: bool,
+) -> dict:
+    """Translate legacy kwargs into the REST ``generationConfig`` dict."""
+    cfg: dict[str, Any] = {"temperature": temperature}
+    if grounding and json_mode:
+        # Mirror legacy behaviour: grounding takes precedence; json_mode
+        # is incompatible with Google Search grounding in the REST API.
+        logger.warning(
+            "Grounding requested with json_mode=True; ignoring json_mode "
+            "(incompatible with grounded responses)."
+        )
+    elif json_mode:
+        cfg["responseMimeType"] = "application/json"
+    return cfg
+
+
+def _compose_prompt(prompt: str, user_message: str) -> str:
+    """Concatenate system instruction and user message into a single text.
+
+    The pool chokepoint exposes a single-text prompt parameter, not
+    a system_instruction field. We preserve the legacy two-part call
+    shape by stitching the system prompt above the user content.
+    """
+    system_part = (prompt or "").strip()
+    user_part = (user_message or "").strip()
+    if system_part and user_part:
+        return f"{system_part}\n\n{user_part}"
+    return system_part or user_part
 
 
 class GeminiClient:
-    """Direct Gemini API client using the google-genai SDK."""
+    """Pool-backed Gemini client.
 
-    def __init__(self, config, rate_limiter):
-        """Initialize with config (for API key + model names) and rate limiter."""
+    The constructor accepts ``config`` and an optional ``rate_limiter``
+    for backward compatibility with existing call sites; both are stored
+    but only ``config.model_*`` defaults are read for diagnostic logging.
+    Key selection and quota management are owned by the ``api_keys``
+    subsystem.
+    """
+
+    def __init__(self, config, rate_limiter=None) -> None:
+        """Store config; ``rate_limiter`` is accepted but unused.
+
+        The legacy single-key + sliding-window rate limiter is replaced
+        by the pool's per-key rotation and circuit breaker (D10/D12).
+        We keep the parameter so ``main.py`` does not have to be edited
+        to drop the now-redundant ``RateLimiter`` instance immediately.
+        """
         self._config = config
+        # Intentionally retained for signature compatibility; not read.
         self._rate_limiter = rate_limiter
-        self._client = genai.Client(api_key=config.gemini_api_key)
 
     def _resolve_model(self, model: str | None) -> str:
+        """Diagnostic-only: report what model the caller asked for.
+
+        The pool's tier ladder picks the actual model that runs on the
+        wire. This helper just returns a label for logging.
+        """
         if model is not None:
             return model
-        return self._config.model_enrichment
+        return getattr(self._config, "model_enrichment", "(pool-default)")
 
     async def generate(
         self,
@@ -47,72 +128,43 @@ class GeminiClient:
         temperature: float = 0.1,
         grounding: bool = False,
     ) -> dict:
-        """
-        Call the Gemini API and return text plus token counts.
+        """Run a single Gemini call through the pool.
 
         Returns:
-            {"text": str, "input_tokens": int, "output_tokens": int}
+            ``{"text": str, "input_tokens": int, "output_tokens": int}``
+
+        Raises:
+            ``GeminiPoolExhausted`` when the pool circuit is open beyond
+            the chokepoint's wait budget. Callers should log + skip +
+            persist their work item; the supervisor will retry the
+            cycle later.
         """
-        resolved_model = self._resolve_model(model)
-        try:
-            await self._rate_limiter.acquire(resolved_model)
-        except QuotaExhaustedError as exc:
-            logger.warning(
-                "Skipping Gemini call: %s. Upgrade to paid tier to increase quota.",
-                exc,
-            )
-            raise
-
-        config_kwargs: dict = {
-            "temperature": temperature,
-            "system_instruction": prompt,
-        }
-        if grounding:
-            config_kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
-            if json_mode:
-                logger.warning("Grounding enabled -- ignoring json_mode (incompatible)")
-        elif json_mode:
-            config_kwargs["response_mime_type"] = "application/json"
-
-        gen_config = types.GenerateContentConfig(**config_kwargs)
-
-        start = time.monotonic()
-        try:
-            response = await self._client.aio.models.generate_content(
-                model=resolved_model,
-                contents=user_message,
-                config=gen_config,
-            )
-        except Exception as exc:
-            if _is_daily_quota_error(exc):
-                logger.error(
-                    "Gemini daily quota exhausted (model=%s). Locking out until "
-                    "midnight Pacific. Upgrade to paid tier to increase quota.",
-                    resolved_model,
-                )
-                try:
-                    self._rate_limiter.set_lockout(resolved_model)
-                except KeyError:
-                    pass
-            else:
-                logger.error("Gemini API error (model=%s): %s", resolved_model, exc)
-            raise
-
-        elapsed = time.monotonic() - start
-        usage = response.usage_metadata
-        input_tokens = (usage.prompt_token_count or 0) if usage else 0
-        output_tokens = (usage.candidates_token_count or 0) if usage else 0
-        text = response.text or ""
-
-        logger.info(
-            "Gemini call | model=%s | in=%d out=%d tokens | %.2fs",
-            resolved_model,
-            input_tokens,
-            output_tokens,
-            elapsed,
+        requested_model = self._resolve_model(model)
+        full_prompt = _compose_prompt(prompt, user_message)
+        gen_config = _build_generation_config(
+            json_mode=json_mode,
+            temperature=temperature,
+            grounding=grounding,
         )
 
-        return {"text": text, "input_tokens": input_tokens, "output_tokens": output_tokens}
+        try:
+            response: GeminiResponse = await gemini_generate_content(
+                full_prompt,
+                generation_config=gen_config,
+            )
+        except GeminiPoolExhausted:
+            logger.warning(
+                "Gemini pool exhausted; skipping call (requested_model=%s).",
+                requested_model,
+            )
+            raise
+
+        input_tokens, output_tokens = _extract_token_counts(response.raw)
+        return {
+            "text": response.text or "",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
 
     async def generate_batch(
         self,
@@ -121,14 +173,14 @@ class GeminiClient:
         model: str = None,
         json_mode: bool = True,
     ) -> dict:
-        """
-        Combine items into a single API call and return a parsed JSON array.
+        """Combine items into a single Gemini call and parse the JSON array.
 
-        Items are joined with a numbered separator so the model can distinguish
-        them. The response must be a JSON array with one element per input item.
+        Items are joined with a numbered separator so the model can
+        distinguish them. The response must be a JSON array with one
+        element per input item.
 
         Returns:
-            {"results": list, "input_tokens": int, "output_tokens": int}
+            ``{"results": list, "input_tokens": int, "output_tokens": int}``
         """
         if not items:
             return {"results": [], "input_tokens": 0, "output_tokens": 0}
@@ -154,7 +206,10 @@ class GeminiClient:
         try:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
-            logger.error("Failed to parse batch JSON response: %s | raw=%r", exc, text[:500])
+            logger.error(
+                "Failed to parse batch JSON response: %s | raw=%r",
+                exc, text[:500],
+            )
             raise
 
         return {
