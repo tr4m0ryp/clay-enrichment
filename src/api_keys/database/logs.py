@@ -12,9 +12,8 @@ from uuid import UUID
 
 import asyncpg
 
-from src.utils.logger import get_logger
-
 from src.api_keys.database._internal import encode_json
+from src.utils.logger import get_logger
 
 
 logger = get_logger(__name__)
