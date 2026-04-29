@@ -28,8 +28,12 @@ logger = get_logger(__name__)
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 PROBE_TIMEOUT_SECONDS = 30.0
-KEY_LEVEL_CONCURRENCY = 5
-INTER_KEY_DELAY_SECONDS = 1.0
+# Tier 1 -- bumped concurrency from 5 to 20 and dropped inter-key delay
+# from 1.0s to 0.2s. With early-exit cutting >75% of probes to a single
+# REST call against the candidate's own Google project, our outbound load
+# from this VM is well below Google's per-IP throttle even at 20-concurrent.
+KEY_LEVEL_CONCURRENCY = 20
+INTER_KEY_DELAY_SECONDS = 0.2
 
 _MAX_TOKENS = 1_048_576
 _MEDIA = ["text", "images", "video", "audio"]

@@ -1,20 +1,24 @@
-"""Cron entrypoint: re-test stale validated_keys rows.
+"""Cron entrypoint: rapid retest of quota_exceeded keys.
 
-Runs daily via systemd timer. Re-runs the full validator (``full=True``
-so quota / rate-limit fields refresh too) over every validated_keys row
-whose status is currently usable -- ``valid``, ``quota_reached``, or
-``quota_exceeded``. The 24h age filter has been dropped: free-tier
-keys reset their quota at 00:00 UTC daily, so the daily revalidate
-should sweep the whole pool rather than wait an extra 24h before
-retesting a key that was just imported. Persists run state to the
-``revalidator`` row in system_status.
+Runs every 30 min via systemd timer. Pulls the oldest-validated
+``quota_exceeded`` rows (those most likely to have crossed a quota
+reset boundary since their last probe), revalidates with full=False,
+and upserts. Keys that flip to ``valid`` become immediately pickable
+by the manager; keys that flip to ``invalid`` no longer waste retest
+cost on subsequent runs.
 
-Run as: ``python -m src.api_keys.cron.revalidate``
+This sits between the per-scrape inline-validate and the once-daily
+revalidate cron: it specifically targets the bucket of keys whose
+probe outcome changes hour-to-hour with quota windows.
+
+Run as: ``python -m src.api_keys.cron.quota_retest``
+Tunable: ``CLAY_QUOTA_RETEST_BATCH`` env var (default 200).
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -30,40 +34,54 @@ from src.utils.logger import get_logger
 
 
 logger = get_logger(__name__)
-SERVICE = "revalidator"
+SERVICE = "quota_retest"
 
-_SELECT_STALE_KEYS_SQL = """
+_SELECT_OLDEST_QUOTA_SQL = """
     select id, potential_key_id, key_value
     from validated_keys
-    where status in ('valid','quota_reached','quota_exceeded')
+    where status = 'quota_exceeded'
     order by validated_at asc nulls first
-    limit 2000
+    limit $1
 """
 
 
 async def _run(pool, execution_id: uuid.UUID) -> dict:
-    """Re-test up to 500 stale validated_keys rows; return run stats."""
+    """Retest the oldest N quota_exceeded keys; return per-status counts."""
+    batch = int(os.environ.get("CLAY_QUOTA_RETEST_BATCH", "200"))
     async with pool.acquire() as conn:
-        rows = await conn.fetch(_SELECT_STALE_KEYS_SQL)
-    revalidated = 0
+        rows = await conn.fetch(_SELECT_OLDEST_QUOTA_SQL, batch)
+    flipped_valid = 0
+    still_quota = 0
+    flipped_invalid = 0
+    other = 0
     failed = 0
     for row in rows:
         try:
-            result = await validate_gemini_key(row["key_value"], full=True)
+            result = await validate_gemini_key(row["key_value"])
             await upsert_validated_key(pool, row["potential_key_id"], result)
-            revalidated += 1
+            if result.status == "valid":
+                flipped_valid += 1
+            elif result.status == "quota_exceeded":
+                still_quota += 1
+            elif result.status == "invalid":
+                flipped_invalid += 1
+            else:
+                other += 1
         except Exception as exc:  # noqa: BLE001 -- isolate per-key failures
             failed += 1
-            logger.exception("revalidate failed for %s: %s", row["id"], exc)
+            logger.exception("quota_retest failed for %s: %s", row["id"], exc)
     return {
-        "revalidated": revalidated,
+        "flipped_valid": flipped_valid,
+        "still_quota": still_quota,
+        "flipped_invalid": flipped_invalid,
+        "other": other,
         "failed": failed,
         "total": len(rows),
     }
 
 
 async def main() -> int:
-    """Run one revalidation pass, persist state, return process exit code."""
+    """Run one quota-retest pass, persist state, return process exit code."""
     pool = await get_supabase_pool()
     execution_id = uuid.uuid4()
     started = datetime.now(tz=timezone.utc)

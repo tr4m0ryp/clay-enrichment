@@ -1,12 +1,15 @@
 """Cron entrypoint: scrape GitHub Code Search for Gemini keys.
 
-Runs hourly via systemd timer. Calls scrape_github_keys with store=True
-and validate=True so each new candidate is persisted into potential_keys
-and inline-validated into validated_keys. Persists run state to the
-``scraper`` row in system_status and emits a log row to key_pool_logs.
+Runs every 10 min via systemd timer. Calls scrape_github_keys with
+store=True and validate=True so each new candidate is concurrently
+stream-inserted into potential_keys and inline-validated into
+validated_keys via the producer/consumer pipeline. Persists run state
+to the ``scraper`` row in system_status and emits a log row to
+key_pool_logs.
 
 Run as: ``python -m src.api_keys.cron.scrape``
-Tunable: ``CLAY_SCRAPE_LIMIT`` env var (default 200).
+Tunable: ``CLAY_SCRAPE_LIMIT`` env var (default 0 = unlimited; positive
+values cap unique candidates per run).
 """
 
 from __future__ import annotations
@@ -29,7 +32,8 @@ SERVICE = "scraper"
 
 async def _run(pool, execution_id: uuid.UUID) -> dict:
     """One scrape pass; returns stats for system_status / append_log."""
-    limit = int(os.environ.get("CLAY_SCRAPE_LIMIT", "200"))
+    # 0 means uncapped: run every static + dynamic query to exhaustion.
+    limit = int(os.environ.get("CLAY_SCRAPE_LIMIT", "0"))
     results = await scrape_github_keys(
         limit=limit,
         store=True,

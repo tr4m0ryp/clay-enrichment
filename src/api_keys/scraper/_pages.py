@@ -34,9 +34,12 @@ logger = get_logger(__name__)
 
 MAX_PAGES_PER_QUERY: int = 10
 PER_PAGE: int = 100
-INTER_FILE_SLEEP: float = 0.2
-INTER_PAGE_SLEEP: float = 0.5
-INTER_QUERY_SLEEP: float = 1.0
+# Tier 1 -- self-imposed sleeps tightened. GitHub raw.host has no formal
+# per-second cap, /search/code is bound by the 30/min PAT quota only, and
+# Gemini per-IP throttling tolerates >10 req/s easily for our pattern.
+INTER_FILE_SLEEP: float = 0.0
+INTER_PAGE_SLEEP: float = 0.1
+INTER_QUERY_SLEEP: float = 0.5
 RATE_LIMIT_RETRY_SLEEP: float = 1.0
 EMPTY_POOL_SLEEP: float = 60.0
 PROACTIVE_ROTATE_THRESHOLD: int = 10
@@ -122,8 +125,14 @@ async def process_search_item(
     on_progress: Optional[ProgressCallback],
     results: list[ScrapedKey],
     limit: int,
+    out_queue: Optional[asyncio.Queue] = None,
 ) -> None:
-    """Fetch one matched file, extract keys, append unique ones to results."""
+    """Fetch one matched file, extract keys, append unique ones to results.
+
+    When ``out_queue`` is supplied, every newly-found key is also pushed
+    onto the queue so producer/consumer fan-out workers can stream-insert
+    + validate concurrently with continued scraping.
+    """
     html_url = item.get("html_url")
     if not html_url:
         return
@@ -145,14 +154,15 @@ async def process_search_item(
             continue
         seen_keys.add(candidate)
         progress.found += 1
-        results.append(
-            ScrapedKey(
-                key=candidate,
-                source_url=html_url,
-                found_at=datetime.now(tz=timezone.utc),
-                metadata=build_metadata(item),
-            )
+        scraped = ScrapedKey(
+            key=candidate,
+            source_url=html_url,
+            found_at=datetime.now(tz=timezone.utc),
+            metadata=build_metadata(item),
         )
+        results.append(scraped)
+        if out_queue is not None:
+            await out_queue.put(scraped)
         emit_progress(progress, on_progress)
 
 
@@ -166,8 +176,14 @@ async def scrape_one_query(
     on_progress: Optional[ProgressCallback],
     results: list[ScrapedKey],
     limit: int,
+    out_queue: Optional[asyncio.Queue] = None,
 ) -> bool:
-    """Run the per-query 3-page loop. Return False to abort the whole scrape."""
+    """Run the per-query 10-page loop. Return False to abort the whole scrape.
+
+    ``out_queue`` (when set) is forwarded to ``process_search_item`` so
+    each newly-found ScrapedKey is pushed for downstream consumers to
+    stream-insert + validate concurrently with the producer.
+    """
     page = 1
     while page <= MAX_PAGES_PER_QUERY and len(results) < limit:
         response = await fetch_search_page(
@@ -208,8 +224,11 @@ async def scrape_one_query(
                 on_progress=on_progress,
                 results=results,
                 limit=limit,
+                out_queue=out_queue,
             )
-            await asyncio.sleep(INTER_FILE_SLEEP)
-        await asyncio.sleep(INTER_PAGE_SLEEP)
+            if INTER_FILE_SLEEP > 0:
+                await asyncio.sleep(INTER_FILE_SLEEP)
+        if INTER_PAGE_SLEEP > 0:
+            await asyncio.sleep(INTER_PAGE_SLEEP)
         page += 1
     return True

@@ -1,10 +1,20 @@
-"""Scrape orchestration: rotate queries, drive the per-query loop, persist.
+"""Scrape orchestration with producer/consumer fan-out.
 
-Drives ``GitHubTokenPool`` against the GitHub Code Search API via
-``_pages.scrape_one_query``, dedupes globally, and (optionally) batch-stores
-plus inline-validates the results. The validator (Task 006) is imported
-lazily inside the validate branch so this module loads even before that
-task lands in the tree.
+Producer: walks every static + dynamic GitHub Code Search query, dedupes
+candidates via in-memory ``seen_keys``, and pushes each newly-found
+ScrapedKey onto an ``asyncio.Queue``.
+
+Consumers: ``validation_concurrency`` workers pull from the queue and
+do ``insert_potential_key`` (stream) + ``validate_gemini_key`` +
+``upsert_validated_key`` in parallel with the producer's ongoing scrape.
+The total cycle time compresses from prior ``scrape_time + validate_time``
+to ``max(scrape_time, validate_time)``.
+
+Stream-insert means a process crash mid-scrape no longer loses every
+candidate -- each row hits Postgres as soon as it's harvested.
+
+``limit=0`` runs every query to exhaustion (no early stop). The cron
+entrypoint defaults to that.
 """
 
 from __future__ import annotations
@@ -19,8 +29,9 @@ import asyncpg
 import httpx
 
 from src.api_keys.database import (
-    insert_potential_keys_batch,
+    insert_potential_key,
     update_system_status,
+    upsert_validated_key,
 )
 from src.api_keys.github_token_pool import GitHubTokenPool
 from src.api_keys.scraper._helpers import ProgressCallback, emit_progress
@@ -37,51 +48,27 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Sentinel pushed once per consumer to signal "no more keys are coming".
+_DONE = object()
 
-async def _maybe_validate_inline(
-    db_pool: asyncpg.Pool,
-    results: list[ScrapedKey],
-    progress: ScrapeProgress,
-    on_progress: Optional[ProgressCallback],
-    inserted_ids: dict[str, UUID],
-) -> None:
-    """Validate every scraped key inline; persist results when ids are known.
+# Each consumer holds at most 2 connections (insert + upsert) plus its
+# own httpx client; size accordingly against the asyncpg pool max_size
+# in supabase_client.py.
+_DEFAULT_VALIDATION_CONCURRENCY = 10
 
-    Imports the validator lazily so this module loads even before Task 006
-    lands. When the validator is missing the function logs and returns
-    without raising, leaving callers free to retry once 006 ships.
-    """
-    try:
-        from src.api_keys.validator import validate_gemini_key  # type: ignore
-        from src.api_keys.database import upsert_validated_key
-    except ImportError as exc:
-        logger.warning(
-            "inline validation requested but validator unavailable: %s",
-            exc,
-        )
-        return
-    for result in results:
-        try:
-            validation = await validate_gemini_key(result.key)
-            potential_id = inserted_ids.get(result.key)
-            if potential_id is not None:
-                await upsert_validated_key(db_pool, potential_id, validation)
-            progress.validated += 1
-        except Exception as exc:  # noqa: BLE001 -- validator failures isolate
-            progress.validation_errors += 1
-            logger.error(
-                "inline validation failed key_prefix=%s err=%s",
-                result.key[:12],
-                exc,
-            )
-        emit_progress(progress, on_progress)
-        await asyncio.sleep(INTER_QUERY_SLEEP)
+# Bounded queue so a stalled consumer doesn't let the producer balloon
+# memory with thousands of buffered candidates.
+_QUEUE_MAXSIZE = 200
+
+# Sentinel for "unlimited" passed into scrape_one_query (which expects an
+# int comparison). 1e9 is well above any plausible single-run yield.
+_UNLIMITED_INT = 10**9
 
 
 async def _persist_query_index(
     db_pool: asyncpg.Pool, start_index: int, processed: int, total: int
 ) -> None:
-    """Persist the next-run starting index to system_status for ``scraper``."""
+    """Persist the next-run starting index to ``system_status`` for ``scraper``."""
     if total <= 0:
         return
     next_index = (start_index + processed) % total
@@ -91,35 +78,76 @@ async def _persist_query_index(
         logger.error("failed to persist last_query_index: %s", exc)
 
 
-async def _lookup_potential_ids(
-    db_pool: asyncpg.Pool, key_values: list[str]
-) -> dict[str, UUID]:
-    """Map ``key_value -> id`` for the supplied potential keys."""
-    if not key_values:
-        return {}
-    sql = "select id, key_value from potential_keys where key_value = any($1::text[])"
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch(sql, key_values)
-    return {row["key_value"]: row["id"] for row in rows}
+async def _consumer_worker(
+    *,
+    db_pool: asyncpg.Pool,
+    queue: "asyncio.Queue[object]",
+    progress: ScrapeProgress,
+    on_progress: Optional[ProgressCallback],
+    validate: bool,
+    store: bool,
+    http_timeout: float,
+) -> None:
+    """Pull ScrapedKey items from the queue; insert + validate + upsert.
+
+    Each consumer owns its own httpx.AsyncClient so the validator can
+    reuse a TCP connection across many keys without contention. asyncpg
+    connections are acquired per-query from the shared pool.
+    """
+    # Lazy import: validator pulls heavy deps and the consumer is only
+    # spawned when validate=True or store=True.
+    from src.api_keys.validator import validate_gemini_key
+
+    async with httpx.AsyncClient(timeout=http_timeout) as client:
+        while True:
+            item = await queue.get()
+            try:
+                if item is _DONE:
+                    return
+                scraped: ScrapedKey = item  # type: ignore[assignment]
+                potential_id: Optional[UUID] = None
+                if store:
+                    try:
+                        potential_id = await insert_potential_key(db_pool, scraped)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(
+                            "stream-insert failed key=%s err=%s",
+                            scraped.key[:12], exc,
+                        )
+                # Skip validation for dups (insert_potential_key returns
+                # None on conflict). The pending validate cron picks up
+                # any orphan rows from prior partial runs.
+                if validate and potential_id is not None:
+                    try:
+                        result = await validate_gemini_key(scraped.key, client=client)
+                        await upsert_validated_key(db_pool, potential_id, result)
+                        progress.validated += 1
+                    except Exception as exc:  # noqa: BLE001
+                        progress.validation_errors += 1
+                        logger.error(
+                            "validate failed key=%s err=%s",
+                            scraped.key[:12], exc,
+                        )
+                emit_progress(progress, on_progress)
+            finally:
+                queue.task_done()
 
 
 async def scrape_github_keys(
-    limit: int = 100,
+    limit: int = 0,
     *,
     validate: bool = False,
     store: bool = False,
     start_query_index: Optional[int] = None,
     existing_keys: Optional[set[str]] = None,
     on_progress: Optional[ProgressCallback] = None,
+    validation_concurrency: int = _DEFAULT_VALIDATION_CONCURRENCY,
 ) -> list[ScrapedKey]:
-    """Scrape GitHub Code Search for Gemini keys and return new ScrapedKey rows.
+    """Scrape GitHub Code Search; concurrently stream-insert + validate.
 
-    Drives the rotating-token pool through the per-query loop with
-    alternating sort, dedupes globally via ``seen_keys``, and stops as
-    soon as ``len(results) >= limit``. When ``store`` is true the new
-    rows are batch-inserted into ``potential_keys`` after the scrape;
-    when ``validate`` is true each scraped key is validated inline (lazy
-    import of Task 006).
+    ``limit=0`` (the default for cron usage) runs every static + dynamic
+    query in the bank. A positive ``limit`` stops as soon as that many
+    unique candidates have been emitted to the queue.
     """
     db_pool = await get_supabase_pool()
     token_pool = GitHubTokenPool(db_pool)
@@ -131,84 +159,90 @@ async def scrape_github_keys(
         logger.error("no scraper queries available; aborting")
         return []
     start_idx = (
-        start_query_index
-        if start_query_index is not None
+        start_query_index if start_query_index is not None
         else random.randrange(total_queries)
     )
     rotated = all_queries[start_idx:] + all_queries[:start_idx]
     seen_keys: set[str] = set(existing_keys) if existing_keys else set()
     results: list[ScrapedKey] = []
-    progress = ScrapeProgress(
-        total=total_queries,
-        current_source="github-code",
-    )
+    progress = ScrapeProgress(total=total_queries, current_source="github-code")
+
+    queue: asyncio.Queue = asyncio.Queue(maxsize=_QUEUE_MAXSIZE)
+
+    do_per_key_work = store or validate
+    consumer_count = validation_concurrency if do_per_key_work else 0
+    consumer_tasks: list[asyncio.Task] = []
+    if consumer_count:
+        consumer_tasks = [
+            asyncio.create_task(
+                _consumer_worker(
+                    db_pool=db_pool,
+                    queue=queue,
+                    progress=progress,
+                    on_progress=on_progress,
+                    validate=validate,
+                    store=store,
+                    http_timeout=30.0,
+                )
+            )
+            for _ in range(consumer_count)
+        ]
+
+    effective_limit = limit if limit > 0 else _UNLIMITED_INT
     logger.info(
-        "scrape start limit=%d queries=%d start_index=%d existing=%d",
-        limit,
-        total_queries,
-        start_idx,
-        len(seen_keys),
+        "scrape start limit=%s queries=%d start_index=%d existing=%d consumers=%d",
+        ("unlimited" if limit <= 0 else limit),
+        total_queries, start_idx, len(seen_keys), consumer_count,
     )
     processed = 0
-    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-        for queue_index, query in enumerate(rotated):
-            if len(results) >= limit:
-                break
-            progress.processed = queue_index + 1
-            progress.current_source = f"github-code: {query[:30]}"
-            emit_progress(progress, on_progress)
-            logger.info(
-                "scrape query %d/%d %r",
-                queue_index + 1,
-                total_queries,
-                query[:LOG_PREVIEW_CHARS],
-            )
-            keep_going = await scrape_one_query(
-                client=client,
-                token_pool=token_pool,
-                query=query,
-                seen_keys=seen_keys,
-                progress=progress,
-                on_progress=on_progress,
-                results=results,
-                limit=limit,
-            )
-            processed = queue_index + 1
-            if not keep_going:
-                break
-            await asyncio.sleep(INTER_QUERY_SLEEP)
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            for queue_index, query in enumerate(rotated):
+                if limit > 0 and len(results) >= limit:
+                    break
+                progress.processed = queue_index + 1
+                progress.current_source = f"github-code: {query[:30]}"
+                emit_progress(progress, on_progress)
+                logger.info(
+                    "scrape query %d/%d %r",
+                    queue_index + 1, total_queries, query[:LOG_PREVIEW_CHARS],
+                )
+                keep_going = await scrape_one_query(
+                    client=client,
+                    token_pool=token_pool,
+                    query=query,
+                    seen_keys=seen_keys,
+                    progress=progress,
+                    on_progress=on_progress,
+                    results=results,
+                    limit=effective_limit,
+                    out_queue=queue if do_per_key_work else None,
+                )
+                processed = queue_index + 1
+                if not keep_going:
+                    break
+                if INTER_QUERY_SLEEP > 0:
+                    await asyncio.sleep(INTER_QUERY_SLEEP)
+    finally:
+        # Tell every consumer to drain + exit; then join the workers.
+        for _ in range(consumer_count):
+            await queue.put(_DONE)
+        if consumer_tasks:
+            await asyncio.gather(*consumer_tasks, return_exceptions=True)
+
     elapsed = (datetime.now(tz=timezone.utc) - progress.start_time).total_seconds()
     logger.info(
-        "scrape end found=%d duplicates=%d processed=%d elapsed_s=%.1f",
-        progress.found,
-        progress.duplicates,
-        processed,
-        elapsed,
+        "scrape end found=%d duplicates=%d processed_queries=%d "
+        "validated=%d errors=%d elapsed_s=%.1f",
+        progress.found, progress.duplicates, processed,
+        progress.validated, progress.validation_errors, elapsed,
     )
-    inserted_ids: dict[str, UUID] = {}
-    if store and results:
-        try:
-            inserted_count = await insert_potential_keys_batch(db_pool, results)
-            logger.info(
-                "scrape stored new=%d total_attempted=%d",
-                inserted_count,
-                len(results),
-            )
-            inserted_ids = await _lookup_potential_ids(
-                db_pool, [r.key for r in results]
-            )
-        except Exception as exc:  # noqa: BLE001 -- never lose results to a DB blip
-            logger.error("scrape store failed: %s", exc)
-    if validate and results:
-        await _maybe_validate_inline(
-            db_pool, results, progress, on_progress, inserted_ids
-        )
     await _persist_query_index(db_pool, start_idx, processed, total_queries)
     return results
 
 
 async def scrape_all_sources(
-    limit: int = 200,
+    limit: int = 0,
     *,
     validate: bool = False,
     store: bool = False,
@@ -216,18 +250,13 @@ async def scrape_all_sources(
 ) -> list[ScrapedKey]:
     """Scrape every supported source. Currently a thin wrapper over GitHub.
 
-    Kept as a separate seam so adding a future source (e.g. GitHub Gists,
-    GitLab) only touches this function rather than the orchestrator.
+    Kept as a separate seam so adding a future source (gists, GitLab) only
+    touches this function rather than the orchestrator's producer/consumer
+    plumbing.
     """
-    logger.info("scrape_all_sources start limit=%d", limit)
+    logger.info("scrape_all_sources start limit=%s", "unlimited" if limit <= 0 else limit)
     keys = await scrape_github_keys(
-        limit=limit,
-        validate=validate,
-        store=store,
-        on_progress=on_progress,
+        limit=limit, validate=validate, store=store, on_progress=on_progress,
     )
-    logger.info(
-        "scrape_all_sources end total=%d (github only)",
-        len(keys),
-    )
+    logger.info("scrape_all_sources end total=%d (github only)", len(keys))
     return keys
