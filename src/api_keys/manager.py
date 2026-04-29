@@ -90,9 +90,49 @@ class KeyPoolManager:
                 )
                 if await self.recovery_probe():
                     continue  # active_tier may have moved up; retry descent.
+
+            # Don't slam the circuit open for hours when the only thing
+            # blocking us is per-(key, model) cooldowns that expire in
+            # seconds. If any valid key has a cooldown_until within the
+            # next 10 minutes for any generative model, this is a
+            # transient cooldown sweep -- return None and let the
+            # caller's circuit_pause loop ride it out.
+            if await self._has_imminent_cooldown_expiry(window_seconds=600):
+                logger.info(
+                    "no key available now, but cooldowns expire within "
+                    "10min -- skipping circuit-open, letting caller wait",
+                )
+                return None
+
             await self._open_circuit()
             return None
         return None
+
+    async def _has_imminent_cooldown_expiry(self, window_seconds: int) -> bool:
+        """Return True if any valid key has a cooldown ending within `window_seconds`.
+
+        Used to decide whether to skip a long-duration circuit open: if
+        cooldowns are about to expire, the pool will recover on its own
+        within the caller's circuit_pause loop.
+        """
+        sql = """
+            SELECT 1 FROM validated_keys vk,
+                 jsonb_each(vk.capabilities) AS cap(model_name, props)
+            WHERE vk.status = 'valid'
+              AND vk.consecutive_failures < 3
+              AND (cap.props ->> 'is_accessible')::bool = true
+              AND (cap.props ->> 'cooldown_until') IS NOT NULL
+              AND (cap.props ->> 'cooldown_until')::timestamptz
+                  < (now() + ($1::int * interval '1 second'))
+            LIMIT 1
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(sql, int(window_seconds))
+            return row is not None
+        except Exception:
+            logger.warning("cooldown-expiry probe failed", exc_info=True)
+            return False
 
     async def mark_success(self, key_id: UUID, model_name: str, latency_ms: int) -> None:
         """Reset consecutive_failures on a successful Gemini call."""
