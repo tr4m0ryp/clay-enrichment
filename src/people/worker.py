@@ -189,8 +189,13 @@ async def _discover_contacts(
         return await gemini_client.generate(
             prompt=rendered,
             user_message=user_message,
-            grounding=True,
+            # No grounding for the same F16 reason as discovery; the
+            # company_name + domain pinned in the prompt is enough for
+            # the model to recall named decision-makers from training
+            # data. Restore once tier-aware fallback lands.
+            grounding=False,
             json_mode=True,
+            max_retries=30,
         )
 
     base = f"Find decision-makers at {company_name} ({domain})."
