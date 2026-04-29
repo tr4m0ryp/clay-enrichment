@@ -104,6 +104,35 @@ def _redact(api_key: str) -> str:
     return f"{api_key[:8]}..." if len(api_key) >= 8 else "..."
 
 
+def _parse_429_metadata(message: Optional[str]) -> tuple[Optional[float], Optional[int]]:
+    """Pull (retry_after_seconds, quota_limit) from a 429 error message.
+
+    Gemini 429 bodies contain ``Please retry in Xs`` and ``limit: N`` strings.
+    The validator records both so ``_derive_status`` can distinguish a
+    transient per-minute throttle (retry_after < ~120s, recoverable) from a
+    genuine project-frozen-on-this-model state (limit=0, no recovery) from
+    a daily-window exhaustion (retry_after > ~1800s).
+    """
+    import re as _re
+    if not isinstance(message, str):
+        return None, None
+    retry: Optional[float] = None
+    limit: Optional[int] = None
+    m = _re.search(r"retry in ([\d.]+)\s*s", message)
+    if m:
+        try:
+            retry = float(m.group(1))
+        except (TypeError, ValueError):
+            retry = None
+    m = _re.search(r"limit:\s*(\d+)", message)
+    if m:
+        try:
+            limit = int(m.group(1))
+        except (TypeError, ValueError):
+            limit = None
+    return retry, limit
+
+
 def _error_envelope(payload: Any) -> tuple[str, Optional[str]]:
     """Return (scannable_text, error_message) extracted from a Gemini error.
 
@@ -185,9 +214,14 @@ async def _probe_model(
         code = "PERMISSION_DENIED"
     else:
         code = str(status)
+    retry_after_s: Optional[float] = None
+    quota_limit: Optional[int] = None
+    if status == 429:
+        retry_after_s, quota_limit = _parse_429_metadata(message)
     return _cap(
         model, is_accessible=False, response_time_ms=elapsed_ms,
         error_code=code, error_message=message or f"HTTP {status}",
+        retry_after_seconds=retry_after_s, quota_limit=quota_limit,
     )
 
 
@@ -222,6 +256,9 @@ async def _fetch_quota_info(
     return quota_remaining, rate_limit
 
 
+_TRANSIENT_429_RETRY_THRESHOLD_S = 120.0
+
+
 def _derive_status(
     capabilities: list[ModelCapability], quota_remaining: Optional[int]
 ) -> ValidationStatus:
@@ -232,6 +269,15 @@ def _derive_status(
     pipeline only calls generateContent today). If no generate model is
     accessible but at least one embed model is, the key is
     `embedding_only` -- alive, just project-frozen on generateContent.
+
+    Per-minute throttle vs project freeze: per the per-minute-throttle
+    diagnostic, free-tier 429s recover within ~60s. So if every generate
+    probe returned 429 with a SHORT retry-after (< 120s), the key is
+    healthy and just rate-limited at probe time -- classify as `valid`.
+    Only when every generate probe returned 429 with NO short-window
+    retry-after (project-frozen with limit=0, or daily-window
+    exhaustion with retry-after in the thousands of seconds) is the
+    key truly `quota_exceeded`.
     """
     if any(c.error_code == "API_KEY_INVALID" for c in capabilities):
         return "invalid"
@@ -239,6 +285,22 @@ def _derive_status(
         return "quota_reached"
     if any(c.is_accessible and c.model_name in _GENERATE_MODELS for c in capabilities):
         return "valid"
+
+    # Look for per-minute-throttled generate probes: 429 with short
+    # retry-after AND quota_limit > 0 (so the key actually has access to
+    # this model, just temporarily bucket-empty). This is recoverable;
+    # treat the key as valid.
+    generate_caps = [c for c in capabilities if c.model_name in _GENERATE_MODELS]
+    if generate_caps and all(c.error_code == "429" for c in generate_caps):
+        any_transient = any(
+            (c.retry_after_seconds is not None
+             and c.retry_after_seconds <= _TRANSIENT_429_RETRY_THRESHOLD_S
+             and (c.quota_limit is None or c.quota_limit > 0))
+            for c in generate_caps
+        )
+        if any_transient:
+            return "valid"
+
     if any(c.is_accessible and c.model_name in _EMBED_MODELS for c in capabilities):
         return "embedding_only"
     # No accessible model anywhere; if every probe returned 429, it's a
