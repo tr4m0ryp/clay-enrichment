@@ -10,6 +10,7 @@ Run as: python3 -m src.main
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 from types import SimpleNamespace
@@ -55,10 +56,16 @@ def _get_shutdown_event() -> asyncio.Event:
 
 
 def _validate_config(config: Config) -> None:
-    """Validate required config fields are set. Exits on failure."""
+    """Validate required config fields are set. Exits on failure.
+
+    GEMINI_API_KEY and DATABASE_URL are no longer required: per
+    project_redesign_decisions.md D10/D12 the api_keys pool owns
+    Gemini key supply, and src.db.connection re-exports the Supabase
+    pool (SUPABASE_DB_URL). Only SUPABASE_DB_URL is structurally
+    required for the pipeline to start.
+    """
     required = {
-        "GEMINI_API_KEY": config.gemini_api_key,
-        "DATABASE_URL": config.database_url,
+        "SUPABASE_DB_URL": os.environ.get("SUPABASE_DB_URL", ""),
     }
     missing = [name for name, value in required.items() if not value]
     if missing:
@@ -78,7 +85,8 @@ def _log_startup_summary(config: Config) -> None:
                 config.model_discovery, config.model_enrichment,
                 config.model_scoring, config.model_contact_extraction,
                 config.model_email_generation)
-    logger.info("Database: %s", config.database_url[:30] + "...")
+    db_url = os.environ.get("SUPABASE_DB_URL", "")
+    logger.info("Database: %s", (db_url[:30] + "...") if db_url else "(unset)")
     logger.info("SMTP configured: %s (host=%s port=%d)",
                 bool(config.smtp_host), config.smtp_host or "(none)", config.smtp_port)
     logger.info("Senders configured: %d (daily limit %d per sender)",
