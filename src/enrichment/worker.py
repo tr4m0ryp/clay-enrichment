@@ -1,12 +1,15 @@
-"""Enrichment worker -- single-call Gemini grounded structured + tier fallback.
+"""Enrichment worker -- single ungrounded structured call per company.
 
-The default path makes one Gemini grounded structured call per company
-(``google_search`` + ``responseMimeType=application/json`` in the same
-request, per F3 / R7) using the combined research+structure prompt
-``ENRICH_COMPANY_SINGLE_CALL``. When the api_keys pool reports a Gemini
-2.5 fallback served the call (per F16), the worker transparently splits
-into the legacy two-step path (``RESEARCH_COMPANY_GROUNDED`` ->
-``STRUCTURE_COMPANY_ENRICHMENT``) producing an identical output schema.
+Makes one Gemini call per ``Discovered`` company using the combined
+research+structure prompt ``ENRICH_COMPANY_SINGLE_CALL`` with
+``json_mode=True`` and ``grounding=False``. Grounding was dropped because
+Gemini 2.5 returns HTTP 400 when grounding+json_mode are combined, and
+the pool's free-tier keys regularly descend below Gemini 3 where the
+combo would work. The prompt pins ``company_name`` + ``company_website``
+so the model recalls the brand from training data; loses freshness on
+recent news but gains reliability across the full tier ladder. Restore
+once a stable F16 fallback (separate grounded research call followed
+by non-grounded structuring) is wired in.
 
 Drops the website-resolver waterfall, the scrape fallback, and the
 stale-refresh loop (per F8 / D8 / D9). The worker only picks
@@ -22,10 +25,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.enrichment.helpers import build_enrichment_text, build_properties_update
-from src.enrichment.prompts.research import RESEARCH_COMPANY_GROUNDED
 from src.enrichment.prompts.single_call import ENRICH_COMPANY_SINGLE_CALL
-from src.enrichment.prompts.structure import STRUCTURE_COMPANY_ENRICHMENT
-from src.gemini.client import is_gemini_3
 from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
@@ -137,18 +137,17 @@ async def _grounded_enrichment(
     website: str,
     campaign_target: str,
 ) -> dict | None:
-    """Run the single combined call; transparently fall back on Gemini 2.5.
+    """Run a single ungrounded structured call to enrich the company.
 
-    Path 1 (Gemini 3): one grounded structured call. The wrapper trusts
-    the parsed dict when ``served_model`` reports the Gemini 3 family
-    OR is empty (pool did not expose the metadata). The single-call
-    prompt is tier-defended, so a strong-output dict from any tier is
-    acceptable.
-    Path 2 (legacy fallback): the parsed value was not a dict, the
-    ``served_model`` reports a non-Gemini-3 family with a non-dict
-    structure, or the call raised. Run the legacy two-step path
-    (grounded research -> non-grounded structuring) so the output
-    schema stays invariant.
+    Grounding was dropped (alongside discovery / people / person_research)
+    because Gemini 2.5 returns HTTP 400 when grounding=True and
+    json_mode=True are combined, and the pool's free-tier keys frequently
+    descend below Gemini 3 where the combo is supported. The prompt
+    pins ``company_name`` + ``company_website`` so the model recalls
+    the brand from training data; loses freshness on recent news but
+    gains reliability across the full tier ladder. Restore once the
+    F16 tier-aware fallback (separate grounded research call followed
+    by non-grounded structuring) lands as a stable option.
     """
     rendered = (
         ENRICH_COMPANY_SINGLE_CALL
@@ -157,112 +156,31 @@ async def _grounded_enrichment(
         .replace("{campaign_target}", campaign_target or "")
     )
 
-    async def _single_call(user_message: str) -> dict:
+    async def _call(user_message: str) -> dict:
         return await gemini_client.generate(
             prompt=rendered,
             user_message=user_message,
-            grounding=True,
+            grounding=False,
             json_mode=True,
+            max_retries=30,
         )
 
     base_msg = f"Research and enrich the company: {name}"
     try:
-        result = await retry_on_malformed_json(_single_call, base_msg)
+        result = await retry_on_malformed_json(_call, base_msg)
     except Exception:
-        logger.exception(
-            "Single-call enrichment raised for '%s'; "
-            "trying legacy two-step", name,
-        )
-        result = None
-
-    if result is not None:
-        parsed, raw = result
-        served_model = (
-            raw.get("served_model", "") if isinstance(raw, dict) else ""
-        )
-        if isinstance(parsed, list) and len(parsed) == 1:
-            parsed = parsed[0]
-        if isinstance(parsed, dict) and (
-            is_gemini_3(served_model) or not served_model
-        ):
-            return parsed
-        logger.info(
-            "Single-call enrichment for '%s' returned non-dict or "
-            "non-Gemini-3 served_model=%r; falling back to two-step",
-            name, served_model,
-        )
-
-    return await _legacy_two_step(
-        gemini_client, name, website, campaign_target,
-    )
-
-
-async def _legacy_two_step(
-    gemini_client: Any,
-    name: str,
-    website: str,
-    campaign_target: str,
-) -> dict | None:
-    """Legacy fallback: grounded research -> non-grounded structuring."""
-    research_prompt = (
-        RESEARCH_COMPANY_GROUNDED
-        .replace("{company_name}", name)
-        .replace("{company_website}", website or "(none)")
-        .replace(
-            "{campaign_target}",
-            campaign_target or "(no campaign target provided)",
-        )
-    )
-
-    try:
-        research_result = await gemini_client.generate(
-            prompt=research_prompt,
-            user_message=f"Research the company: {name}",
-            grounding=True,
-        )
-    except Exception:
-        logger.exception("Legacy research call failed for '%s'", name)
+        logger.exception("Enrichment call raised for '%s'", name)
         return None
 
-    research_text = (research_result.get("text") or "").strip()
-    if not research_text:
-        logger.warning(
-            "Legacy research returned empty text for '%s'", name,
-        )
-        return None
-
-    structure_prompt = (
-        STRUCTURE_COMPANY_ENRICHMENT
-        .replace("{company_name}", name)
-        .replace("{company_website}", website or "(none)")
-        .replace(
-            "{campaign_target}",
-            campaign_target or "(no campaign target provided)",
-        )
-        .replace("{research_text}", research_text)
-    )
-
-    async def _structure_call(user_message: str) -> dict:
-        return await gemini_client.generate(
-            prompt=structure_prompt,
-            user_message=user_message,
-            json_mode=True,
-        )
-
-    try:
-        result = await retry_on_malformed_json(
-            _structure_call, f"Structure the research for: {name}",
-        )
-    except Exception:
-        logger.exception("Legacy structure call failed for '%s'", name)
-        return None
     if result is None:
         return None
-
     parsed, _raw = result
     if isinstance(parsed, list) and len(parsed) == 1:
         parsed = parsed[0]
-    return parsed if isinstance(parsed, dict) else None
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
 
 
 async def _get_campaign_target(company: dict, campaigns_db: Any) -> str:
