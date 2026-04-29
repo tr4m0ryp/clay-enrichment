@@ -114,3 +114,23 @@ class CampaignsDB:
             status,
             campaign_id,
         )
+
+    async def increment_discovery_strategy_index(
+        self, campaign_id: str,
+    ) -> None:
+        """Advance the 13-strategy rotation cursor by 1.
+
+        Used by the discovery worker after each cycle so the next cycle
+        picks the next strategy in the rotation. The increment is
+        unbounded -- ``pick_strategy`` applies ``index % 13`` so an
+        ever-growing counter is fine.
+        """
+        await self._pool.execute(
+            """
+            UPDATE campaigns
+            SET discovery_strategy_index = discovery_strategy_index + 1,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            campaign_id,
+        )
