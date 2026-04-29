@@ -19,18 +19,35 @@ ValidationStatus = Literal[
     "invalid",
     "quota_reached",
     "quota_exceeded",
+    "embedding_only",
 ]
 
+# Tier names recognized by the manager. 2.5-pro is kept in the Literal
+# for backward-compat with legacy system_status rows but is excluded
+# from TIER_LADDER below: free-tier limit:0 means it never serves a
+# request, so descending through it just wastes a probe.
 TierName = Literal[
     "gemini-2.5-pro",
     "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
 ]
 
+# Tier ladder ordered by observed key coverage in our pool. As of
+# 13.5k validated / 5 generate-valid: 3.1-flash-lite-preview leads
+# at 5/5 coverage and ~1000 RPD/key. 2.5-pro is excluded -- free-tier
+# limit:0 means it never serves a request. 2.0-flash{,-lite} are tail
+# tiers in case some older keys retain 2.0-tier quota allocation.
 TIER_LADDER: list[TierName] = [
-    "gemini-2.5-pro",
-    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
 ]
 
 
