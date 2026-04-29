@@ -3,12 +3,22 @@ Layer 4: Email generation worker.
 
 Generates personalized cold emails for high-priority contacts via Gemini.
 Uses Postgres DB modules (src.db) for all data access.
+
+Per task 014, the system prompt is locked to the per-campaign approved
+voice via two campaign-level fields (schema 009) populated by the
+Next-button flow (task 015): ``campaigns.email_style_profile`` (TEXT,
+the voice anchor injected at the top of the prompt) and
+``campaigns.banned_phrases`` (JSONB list[str], campaign-specific
+phrases the model must never use, additive on top of the standard ban
+list inside the prompt itself). When either field is empty defaults
+from ``src.email.context`` are used. Gemini output is parsed through
+the tolerant extractor + single-retry helper (F16) -- never
+``json.loads`` directly.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 from src.db.campaigns import CampaignsDB
@@ -19,22 +29,17 @@ from src.db.contact_campaigns import ContactCampaignsDB
 from src.email.context import (
     build_contact_context,
     build_company_context,
-    group_junction_entries_by_company,
+    coerce_banned_phrases,
     entry_has_email_subject,
+    format_banned_phrases,
+    group_junction_entries_by_company,
+    resolve_style_profile,
 )
+from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
 
 _CYCLE_INTERVAL = 240  # seconds between worker cycles
-
-
-async def _load_campaign_target(campaigns_db: CampaignsDB, campaign_id: str) -> str:
-    """Load the target description for a campaign by page ID."""
-    campaigns = await campaigns_db.get_processable_campaigns()
-    for cp in campaigns:
-        if str(cp["id"]) == str(campaign_id):
-            return cp.get("target_description", "")
-    return ""
 
 
 async def generate_emails_for_company(
@@ -47,18 +52,27 @@ async def generate_emails_for_company(
     contacts_db: ContactsDB,
     emails_db: EmailsDB,
     contact_campaigns_db: ContactCampaignsDB,
-    campaign_id: str,
-    campaign_target: str,
+    campaign: dict,
 ) -> None:
-    """Generate emails for junction entries at one company."""
+    """Generate emails for junction entries at one company.
+
+    ``campaign`` is the full campaigns row dict (must include
+    ``email_style_profile`` and ``banned_phrases`` per schema 009).
+    The voice anchor and banned-phrase list are rendered into the
+    prompt for every email at this company.
+    """
+    campaign_id = str(campaign["id"])
+    campaign_target = campaign.get("target_description", "") or ""
+    style_profile = resolve_style_profile(campaign)
+    banned_phrases = coerce_banned_phrases(campaign.get("banned_phrases"))
+    banned_phrases_str = format_banned_phrases(banned_phrases)
+
     company_id = str(company["id"])
     company_name = company.get("name", "")
 
-    # Load company body text for enrichment context
     company_body = await companies_db.get_body(company_id)
     company_context = build_company_context(company, company_body)
 
-    # Build per-contact context from junction entries
     contact_contexts: list[str] = []
     personalized_contexts: list[str] = []
     entry_meta: list[tuple[dict, str, str]] = []
@@ -73,7 +87,6 @@ async def generate_emails_for_company(
 
         contact_id = str(contact_id)
 
-        # Fetch contact row
         contact_row = await contacts_db._pool.fetchrow(
             "SELECT * FROM contacts WHERE id = $1",
             entry["contact_id"],
@@ -83,12 +96,10 @@ async def generate_emails_for_company(
             continue
         contact = dict(contact_row)
 
-        # Load contact body (contains person research)
         contact_body = await contacts_db.get_body(contact_id)
         ctx = build_contact_context(contact, contact_body)
         contact_contexts.append(ctx)
 
-        # Get personalized context from junction record
         pc = entry.get("personalized_context", "") or ""
         personalized_contexts.append(pc)
 
@@ -100,69 +111,80 @@ async def generate_emails_for_company(
 
     from src.email.prompts import GENERATE_EMAIL
 
-    # Generate one email per contact using individual context
     for i, (junction_entry, contact_id, contact_name) in enumerate(entry_meta):
         contact_ctx = contact_contexts[i] if i < len(contact_contexts) else ""
         pc = personalized_contexts[i] if i < len(personalized_contexts) else ""
 
-        # Combine company enrichment with contact-level context
         full_context = (
             f"{company_context}\n\n{contact_ctx}"
             if company_context else contact_ctx
         )
 
-        # Interpolate per-contact prompt variables
-        prompt = GENERATE_EMAIL.replace(
-            "{campaign_target}",
-            campaign_target or "No specific campaign target provided.",
-        ).replace(
-            "{contact_name}", contact_name or "there",
-        ).replace(
-            "{company_name}", company_name or "the company",
-        ).replace(
-            "{contact_context}",
-            full_context or "No specific context available.",
-        ).replace(
-            "{personalized_context}",
-            pc or "No personalized context available.",
+        # Voice anchor + campaign-specific bans go first so they set
+        # the tone before any context the model can drift on.
+        prompt = (
+            GENERATE_EMAIL
+            .replace("{email_style_profile}", style_profile)
+            .replace("{banned_phrases}", banned_phrases_str)
+            .replace(
+                "{campaign_target}",
+                campaign_target or "No specific campaign target provided.",
+            )
+            .replace("{contact_name}", contact_name or "there")
+            .replace("{company_name}", company_name or "the company")
+            .replace(
+                "{contact_context}",
+                full_context or "No specific context available.",
+            )
+            .replace(
+                "{personalized_context}",
+                pc or "No personalized context available.",
+            )
         )
 
-        # Call Gemini for this contact
-        result = await gemini_client.generate(
-            prompt=prompt,
-            user_message=(
-                f"Generate a personalized cold email for {contact_name}"
-                f" at {company_name}."
-            ),
-            model=config.model_email_generation,
-            json_mode=True,
-            temperature=0.7,
+        async def _call(user_message: str) -> dict:
+            return await gemini_client.generate(
+                prompt=prompt,
+                user_message=user_message,
+                model=config.model_email_generation,
+                json_mode=True,
+                temperature=0.7,
+            )
+
+        base_user_message = (
+            f"Generate a personalized cold email for {contact_name}"
+            f" at {company_name}."
         )
 
-        # Parse response
-        try:
-            email_data = json.loads(result["text"])
-        except json.JSONDecodeError:
+        outcome = await retry_on_malformed_json(_call, base_user_message)
+        if outcome is None:
             logger.error(
-                "Failed to parse email response for %s at %s: %s",
-                contact_name, company_name, result["text"][:500],
+                "Email gen JSON unrecoverable for %s at %s",
+                contact_name, company_name,
             )
             continue
 
+        email_data, raw = outcome
+
         if isinstance(email_data, list):
             email_data = email_data[0] if email_data else {}
+        if not isinstance(email_data, dict):
+            logger.error(
+                "Email gen non-dict output for %s at %s: %r",
+                contact_name, company_name, type(email_data),
+            )
+            continue
 
         logger.info(
             "Generated email for %s at %s | in=%d out=%d tokens",
             contact_name, company_name,
-            result["input_tokens"], result["output_tokens"],
+            raw.get("input_tokens", 0), raw.get("output_tokens", 0),
         )
 
         junction_id = str(junction_entry["id"])
-        subject = email_data.get("subject", f"Outreach to {contact_name}")
-        body = email_data.get("body", "")
+        subject = email_data.get("subject") or f"Outreach to {contact_name}"
+        body = email_data.get("body") or ""
 
-        # Create email record in Emails DB (body stored as TEXT)
         await emails_db.create_email(
             subject=subject,
             contact_id=contact_id,
@@ -170,13 +192,11 @@ async def generate_emails_for_company(
             body=body,
         )
 
-        # Update junction record with email subject and outreach status
         await contact_campaigns_db.update_email_subject(junction_id, subject)
         await contact_campaigns_db.update_outreach_status(
             junction_id, "Email Pending Review"
         )
 
-        # Update contact status
         await contacts_db.update_contact(
             contact_id, status="Email Generated"
         )
@@ -200,22 +220,12 @@ async def email_gen_worker(
 
     Polls the junction table for entries with score >=7 and no email
     subject yet. Groups by company and generates personalized emails
-    using person research context.
-
-    Args:
-        config: Application config object.
-        gemini_client: GeminiClient instance.
-        campaigns_db: CampaignsDB instance.
-        companies_db: CompaniesDB instance.
-        contacts_db: ContactsDB instance.
-        emails_db: EmailsDB instance.
-        contact_campaigns_db: ContactCampaignsDB instance.
+    using person research context plus the per-campaign locked voice.
     """
     logger.info("Email gen worker started")
 
     while True:
         try:
-            # Get all processable campaigns (Active + Paused + Completed)
             active_campaigns = await campaigns_db.get_processable_campaigns()
             if not active_campaigns:
                 logger.debug("No processable campaigns, sleeping")
@@ -226,12 +236,10 @@ async def email_gen_worker(
                 campaign_id = str(campaign["id"])
                 campaign_name = campaign.get("name", "")
 
-                # Query junction table for high-priority entries
                 entries = await contact_campaigns_db.get_high_priority(
                     campaign_id, min_score=7.0
                 )
 
-                # Filter to entries without an email subject yet
                 pending = [e for e in entries if not entry_has_email_subject(e)]
                 if not pending:
                     logger.debug(
@@ -243,10 +251,6 @@ async def email_gen_worker(
                 logger.info(
                     "Campaign '%s': %d high-priority entries need emails",
                     campaign_name, len(pending),
-                )
-
-                campaign_target = await _load_campaign_target(
-                    campaigns_db, campaign_id
                 )
 
                 by_company = group_junction_entries_by_company(pending)
@@ -273,8 +277,7 @@ async def email_gen_worker(
                             contacts_db=contacts_db,
                             emails_db=emails_db,
                             contact_campaigns_db=contact_campaigns_db,
-                            campaign_id=campaign_id,
-                            campaign_target=campaign_target,
+                            campaign=campaign,
                         )
                     except Exception:
                         logger.error(

@@ -3,15 +3,89 @@ Email context building helpers for the email generation layer.
 
 Extracted from email_gen.py to keep each file under 300 lines.
 Provides functions for building contact/company context strings
-from flat Postgres dicts, and grouping junction entries by company.
+from flat Postgres dicts, grouping junction entries by company, and
+(per task 014) resolving the per-campaign voice anchor and banned
+phrases that prepend the email-gen prompt.
 """
 
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from typing import Any
+
+from src.utils.json_extract import extract_json
 
 logger = logging.getLogger(__name__)
+
+# Mirrors the existing prompt's tone for campaigns predating the
+# redesign or finalized before the Next-button flow populated
+# email_style_profile. Kept intentionally short -- the prompt itself
+# carries the per-part rules; this is just the voice anchor.
+DEFAULT_STYLE_PROFILE: str = (
+    "Direct, problem-focused B2B voice. Short paragraphs. No corporate "
+    "filler. Lead with a recipient-specific observation. Mirror the "
+    "prospect's own language. One clear CTA. Never use 'I hope this "
+    "finds you well' or 'innovative'."
+)
+
+_DEFAULT_BANNED_PHRASES_RENDER: str = (
+    "(none beyond the standard ban list in the prompt below)"
+)
+
+
+def coerce_banned_phrases(raw: Any) -> list[str]:
+    """Normalize the campaign row's ``banned_phrases`` into list[str].
+
+    asyncpg returns JSONB columns as JSON strings unless a custom codec
+    is registered (the project deliberately keeps no codec). The value
+    can be ``None``, a list (some setups decode jsonb), or a JSON-
+    encoded string like ``'["foo", "bar"]'`` -- the common case.
+
+    Any other shape is treated as no bans. ``extract_json`` is used to
+    deserialize the string form because it tolerates malformed input
+    without raising.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    if isinstance(raw, str):
+        if not raw.strip():
+            return []
+        parsed = extract_json(raw)
+        if isinstance(parsed, list):
+            return [str(p).strip() for p in parsed if str(p).strip()]
+        return []
+    return []
+
+
+def format_banned_phrases(phrases: list[str]) -> str:
+    """Render the banned-phrases list for inclusion in the prompt.
+
+    Returns a human-readable bullet list. When ``phrases`` is empty the
+    placeholder string explicitly tells the model that only the
+    standard ban list (already inside the prompt) applies.
+    """
+    cleaned = [p.strip() for p in phrases if p and p.strip()]
+    if not cleaned:
+        return _DEFAULT_BANNED_PHRASES_RENDER
+    return "- " + "\n- ".join(cleaned)
+
+
+def resolve_style_profile(campaign: dict) -> str:
+    """Return the campaign's voice anchor, falling back to the default.
+
+    Reads ``campaign['email_style_profile']`` (TEXT column added in
+    schema 009) and returns the stripped value, or
+    ``DEFAULT_STYLE_PROFILE`` when the field is empty or missing.
+    """
+    raw = campaign.get("email_style_profile") or ""
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if stripped:
+            return stripped
+    return DEFAULT_STYLE_PROFILE
 
 
 def build_contact_context(contact: dict, contact_body: str) -> str:
