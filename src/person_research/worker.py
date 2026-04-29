@@ -226,7 +226,11 @@ async def _bounded(
     """Run ``_research_contact`` under the concurrency semaphore.
 
     Errors are logged but never propagate so one bad contact does not
-    abort the cycle's ``asyncio.gather``.
+    abort the cycle's ``asyncio.gather``. On exception we ALSO advance
+    the contact's status to ``Researched`` (with empty body) so it
+    doesn't get retried forever in the same exhausted state -- the
+    pipeline can move forward with whatever data is present, and a
+    future re-run of the campaign can re-research if needed.
     """
     async with sem:
         try:
@@ -234,10 +238,23 @@ async def _bounded(
                 contact, gemini_client, contacts_db, companies_db,
             )
         except Exception:
+            name = contact.get("name", "?")
             logger.exception(
-                "Person research: unhandled error for '%s'",
-                contact.get("name", "?"),
+                "Person research: unhandled error for '%s'; marking "
+                "Researched with empty body to avoid infinite retry",
+                name,
             )
+            try:
+                contact_id = str(contact.get("id"))
+                if contact_id:
+                    await contacts_db.update_contact(
+                        contact_id, status="Researched",
+                    )
+            except Exception:
+                logger.exception(
+                    "Person research: also failed to mark '%s' Researched",
+                    name,
+                )
 
 
 async def person_research_worker(
