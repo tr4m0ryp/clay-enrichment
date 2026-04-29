@@ -20,6 +20,7 @@ entrypoint defaults to that.
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 from datetime import datetime, timezone
 from typing import Optional
@@ -41,6 +42,7 @@ from src.api_keys.scraper._pages import (
     LOG_PREVIEW_CHARS,
     scrape_one_query,
 )
+from src.api_keys.scraper.gitlab import scrape_gitlab_keys
 from src.api_keys.scraper.queries import build_dynamic_queries, build_static_queries
 from src.api_keys.supabase_client import get_supabase_pool
 from src.api_keys.types import ScrapedKey, ScrapeProgress
@@ -248,6 +250,35 @@ async def scrape_github_keys(
                     break
                 if INTER_QUERY_SLEEP > 0:
                     await asyncio.sleep(INTER_QUERY_SLEEP)
+
+            # Optional GitLab pass: shares the same consumer pool +
+            # seen_keys + results, so dups between sources are
+            # automatically de-duplicated and validated only once.
+            if os.environ.get("GITLAB_PAT"):
+                gitlab_queries = [
+                    "AIzaSy",
+                    "GEMINI_API_KEY",
+                    "GoogleGenerativeAI",
+                    "generateContent AIza",
+                    "google.generativeai",
+                    "models/gemini",
+                ]
+                logger.info(
+                    "gitlab pass: %d queries, current results=%d",
+                    len(gitlab_queries), len(results),
+                )
+                try:
+                    await scrape_gitlab_keys(
+                        queries=gitlab_queries,
+                        seen_keys=seen_keys,
+                        progress=progress,
+                        on_progress=on_progress,
+                        results=results,
+                        limit=effective_limit,
+                        out_queue=queue if do_per_key_work else None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("gitlab pass failed: %s", exc)
     finally:
         # Tell every consumer to drain + exit; then join the workers.
         for _ in range(consumer_count):
