@@ -1,15 +1,11 @@
 """
-Enrichment helper functions: plain text body builder, property updates,
-and scrape fallback logic.
+Enrichment helper functions: plain text body builder and property updates.
 
 Split from enrichment.py to stay under 300-line limit.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
-
-from src.enrichment.prompts.base import ENRICH_COMPANY
 
 logger = logging.getLogger(__name__)
 
@@ -87,39 +83,3 @@ def build_properties_update(result: dict, status: str) -> dict:
         props["dpp_fit_reasoning"] = str(result["dpp_fit_reasoning"])
 
     return props
-
-
-async def scrape_fallback(
-    name: str, website: str, campaign_target: str,
-    gemini_client, scraper,
-) -> dict:
-    """Fallback: scrape website and use legacy single-pass prompt."""
-    scrape_result = await scraper.scrape_with_fallback(
-        company_name=name, primary_url=website,
-    ) if website else None
-
-    content = ""
-    if scrape_result and scrape_result.content:
-        content = scrape_result.content
-
-    prompt = ENRICH_COMPANY.replace(
-        "{campaign_target}", campaign_target or "(no campaign target provided)",
-    ).replace("{companies}", "(see below)")
-
-    scrape_text = (
-        f"Company: {name}\n"
-        f"Website: {website}\n\n"
-        f"{content if content else '(no content scraped)'}"
-    )
-
-    result = await gemini_client.generate(
-        prompt=prompt,
-        user_message=scrape_text,
-        json_mode=True,
-    )
-
-    parsed = json.loads(result["text"].strip())
-    # Legacy prompt returns an array; take first element
-    if isinstance(parsed, list):
-        parsed = parsed[0] if parsed else {}
-    return parsed

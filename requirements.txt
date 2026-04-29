@@ -2,7 +2,6 @@ google-genai
 notion-client<3.0.0
 aiohttp
 python-dotenv
-beautifulsoup4
 asyncpg>=0.29
 supabase>=2.4
 httpx>=0.27

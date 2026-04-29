@@ -24,9 +24,6 @@ from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
 from src.db.emails import EmailsDB
 from src.db.contact_campaigns import ContactCampaignsDB
-from src.search.brave_search import BraveSearchClient
-from src.search.searxng import SearXNGClient
-from src.search.scraper import WebScraper
 from src.people.smtp_verify import SMTPVerifier
 from src.discovery.worker import (
     discovery_worker,
@@ -83,7 +80,6 @@ def _log_startup_summary(config: Config) -> None:
                 config.model_scoring, config.model_contact_extraction,
                 config.model_email_generation)
     logger.info("Database: %s", config.database_url[:30] + "...")
-    logger.info("SearXNG URL: %s", config.searxng_url)
     logger.info("SMTP configured: %s (host=%s port=%d)",
                 bool(config.smtp_host), config.smtp_host or "(none)", config.smtp_port)
     logger.info("Senders configured: %d (daily limit %d per sender)",
@@ -141,18 +137,11 @@ async def main() -> None:
     _validate_config(config)
     _log_startup_summary(config)
 
-    # Rate limiter (shared across Gemini and search clients)
+    # Rate limiter (shared across Gemini API key pool)
     rate_limiter = RateLimiter(DEFAULT_LIMITS)
 
     # Core clients
     gemini = GeminiClient(config, rate_limiter)
-    if config.brave_search_api_key:
-        search_client = BraveSearchClient(api_key=config.brave_search_api_key)
-        logger.info("Using Brave Search API")
-    else:
-        search_client = SearXNGClient(base_url=config.searxng_url)
-        logger.info("Using SearXNG at %s", config.searxng_url)
-    scraper = WebScraper()
 
     # Discovery utilities
     smtp_verifier = SMTPVerifier()
