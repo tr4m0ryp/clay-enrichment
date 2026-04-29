@@ -44,6 +44,11 @@ RATE_LIMIT_RETRY_SLEEP: float = 1.0
 EMPTY_POOL_SLEEP: float = 60.0
 PROACTIVE_ROTATE_THRESHOLD: int = 10
 LOG_PREVIEW_CHARS: int = 200
+# Per-page file-fetch concurrency. Search returns up to 100 file refs per
+# page; sequential fetching at ~0.3s/file made each page take ~30s and
+# left the PAT pool idle. With 10 concurrent fetches a page completes in
+# ~3s and the PAT pool can actually saturate at 30 search/min/PAT.
+FILE_FETCH_CONCURRENCY: int = 10
 
 
 _SEARCH_URL_TEMPLATE: str = (
@@ -213,21 +218,30 @@ async def scrape_one_query(
         items = data.get("items") or []
         if not items:
             break
-        for item in items:
-            if len(results) >= limit:
-                break
-            await process_search_item(
-                client=client,
-                item=item,
-                seen_keys=seen_keys,
-                progress=progress,
-                on_progress=on_progress,
-                results=results,
-                limit=limit,
-                out_queue=out_queue,
-            )
-            if INTER_FILE_SLEEP > 0:
-                await asyncio.sleep(INTER_FILE_SLEEP)
+
+        # Process each item concurrently (capped). asyncio is single-
+        # threaded so seen_keys/results mutations between awaits inside
+        # process_search_item remain atomic from the event loop's view.
+        sem = asyncio.Semaphore(FILE_FETCH_CONCURRENCY)
+
+        async def _one(item):
+            async with sem:
+                if len(results) >= limit:
+                    return
+                await process_search_item(
+                    client=client,
+                    item=item,
+                    seen_keys=seen_keys,
+                    progress=progress,
+                    on_progress=on_progress,
+                    results=results,
+                    limit=limit,
+                    out_queue=out_queue,
+                )
+                if INTER_FILE_SLEEP > 0:
+                    await asyncio.sleep(INTER_FILE_SLEEP)
+
+        await asyncio.gather(*(_one(item) for item in items))
         if INTER_PAGE_SLEEP > 0:
             await asyncio.sleep(INTER_PAGE_SLEEP)
         page += 1
