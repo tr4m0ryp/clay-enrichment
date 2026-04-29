@@ -1,0 +1,18 @@
+[Unit]
+Description=Clay enrichment async pipeline (discovery / enrichment / people / research / scoring / email)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=clay
+WorkingDirectory=/opt/clay-enrichment
+EnvironmentFile=/opt/clay-enrichment/.env
+ExecStart=/opt/clay-enrichment/.venv/bin/python -m src.main
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
