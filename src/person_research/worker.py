@@ -162,8 +162,14 @@ async def _research_contact(
         return await gemini_client.generate(
             prompt=rendered,
             user_message=user_message,
-            grounding=True,
+            # No grounding for F16 compatibility (Gemini 2.5 rejects
+            # grounding+json_mode). Person research prompt already pins
+            # contact_name + title + company_name; the model recalls
+            # publicly-known activity from training data. Loses recency
+            # on news/launches; gain reliability across the tier ladder.
+            grounding=False,
             json_mode=True,
+            max_retries=30,
         )
 
     base_user_message = (

@@ -156,8 +156,15 @@ async def _call_strategy(
         return await gemini_client.generate(
             prompt=system_prompt,
             user_message=msg,
-            grounding=True,
+            # No grounding: Gemini 2.5 returns 400 on grounding+json_mode
+            # combined (F16). The strategy prompt already carries the
+            # campaign's icp_brief, exclusion list, and (for adjacency
+            # strategies) top-DPP seeds, so the model has enough context
+            # without fresh web search. Restore once tier-aware fallback
+            # lands for grounded paths.
+            grounding=False,
             json_mode=True,
+            max_retries=30,
         )
 
     try:
