@@ -107,10 +107,18 @@ export async function POST(request: Request) {
       banned_phrases: phrases,
     });
   } catch (err) {
-    const message = (err as Error).message || "Persistence failed";
-    // Most likely cause: unique-constraint violation on campaigns.name.
-    const status = /duplicate|unique/i.test(message) ? 409 : 500;
-    return NextResponse.json({ error: message }, { status });
+    const raw = (err as Error).message || "Persistence failed";
+    if (/duplicate|unique/i.test(raw) && /campaigns_name_key|name/i.test(raw)) {
+      return NextResponse.json(
+        {
+          error:
+            `A campaign named "${name}" already exists. Go back to Step 1 ` +
+            `and choose a different name.`,
+        },
+        { status: 409 },
+      );
+    }
+    return NextResponse.json({ error: raw }, { status: 500 });
   }
 
   revalidatePath("/");

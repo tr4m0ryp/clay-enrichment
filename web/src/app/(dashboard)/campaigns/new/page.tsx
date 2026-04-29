@@ -181,10 +181,7 @@ export default function NewCampaignPage() {
           brief={brief}
           onApprove={handleApprove}
           onRegenerate={() => setStep(3)}
-          onBack={() => {
-            setStep(1);
-            setBrief(null);
-          }}
+          onBack={() => setStep(1)}
         />
       )}
 
