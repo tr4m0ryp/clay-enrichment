@@ -28,12 +28,14 @@ async def get_supabase_pool() -> asyncpg.Pool:
 
     Reads the connection URL from the SUPABASE_DB_URL environment variable
     and surfaces a clear KeyError if the variable is missing. Pool size is
-    bounded to min=2, max=10 connections per the rules.md defaults.
+    bounded to min=2, max=25 connections; the upper bound exists to support
+    the producer/consumer scrape pipeline where ~10 validator workers each
+    can hold 2 connections (insert_potential_key + upsert_validated_key).
     """
     global _pool
     if _pool is None:
         url = os.environ["SUPABASE_DB_URL"]
-        _pool = await asyncpg.create_pool(url, min_size=2, max_size=10)
+        _pool = await asyncpg.create_pool(url, min_size=2, max_size=25)
     return _pool
 
 
