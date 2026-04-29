@@ -38,6 +38,12 @@ INTER_KEY_DELAY_SECONDS = 0.2
 _MAX_TOKENS = 1_048_576
 _MEDIA = ["text", "images", "video", "audio"]
 _BASE = ["code-execution", "function-calling"]
+# Validation surface widened to cover both regular-flash and lite tiers.
+# Free-tier daily quotas: 2.5-pro=0 (paid only), 3-flash-preview=~100,
+# 2.5-flash=250, 2.5-flash-lite=1000, 3-flash-lite-preview=unpublished.
+# Some projects allocate quota per-model independently, so a key 429-ing
+# on flash may still work on flash-lite (and vice versa). Probing the
+# whole surface gives the manager a richer pickable set.
 GEMINI_VALIDATION_MODELS: list[dict[str, Any]] = [
     {"name": "gemini-2.5-pro", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": _MEDIA + ["pdf"] + _BASE + ["search-grounding", "thinking"]},
@@ -45,6 +51,10 @@ GEMINI_VALIDATION_MODELS: list[dict[str, Any]] = [
      "features": _MEDIA + ["pdf"] + _BASE + ["thinking"]},
     {"name": "gemini-2.5-flash", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": _MEDIA + _BASE},
+    {"name": "gemini-2.5-flash-lite", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
+     "features": ["text"] + _BASE},
+    {"name": "gemini-3.1-flash-lite-preview", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
+     "features": ["text"] + _BASE},
 ]
 
 _INVALID_MARKERS = ("API_KEY_INVALID", "API key not valid")
