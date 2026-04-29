@@ -38,7 +38,6 @@ from src.person_research.worker import person_research_worker
 from src.scoring.worker import campaign_scoring_worker
 from src.email.gen import email_gen_worker
 from src.email.sender import email_sender_worker
-from src.dashboard.worker import dashboard_stats_worker
 
 logger: logging.Logger | None = None
 
