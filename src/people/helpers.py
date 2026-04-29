@@ -1,4 +1,4 @@
-"""People layer helpers: email verification, name splitting, body blocks.
+"""People layer helpers: domain extraction and name splitting.
 
 Extracted from people.py to keep files under the 300-line limit.
 """
@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import logging
 from urllib.parse import urlparse
-
-from src.people.smtp_verify import SMTPVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -58,34 +56,3 @@ def split_name(full_name: str) -> tuple[str, str]:
     if len(parts) == 1:
         return (parts[0], "")
     return (parts[0], " ".join(parts[1:]))
-
-
-async def verify_email_waterfall(
-    smtp_verifier: SMTPVerifier,
-    permutations: list[str],
-) -> tuple[str, bool]:
-    """Try email permutations in order, stop at first verified.
-
-    Args:
-        smtp_verifier: The SMTP verification client.
-        permutations: Ordered list of email address candidates.
-
-    Returns:
-        Tuple of (email, verified). If none verify, returns the first
-        permutation marked as unverified.
-    """
-    if not permutations:
-        return ("", False)
-
-    for email in permutations:
-        try:
-            result = await smtp_verifier.verify(email)
-            if result.valid:
-                logger.info("Email verified: %s (method=%s)", email, result.method)
-                return (email, True)
-        except Exception as exc:
-            logger.warning("SMTP verify error for %s: %s", email, exc)
-            continue
-
-    # No email verified -- return first permutation as best guess
-    return (permutations[0], False)
