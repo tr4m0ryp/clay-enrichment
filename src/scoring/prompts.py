@@ -1,251 +1,195 @@
-"""
-Combined contact structuring and campaign-aware scoring prompt.
+"""Combined contact structuring + campaign-aware scoring prompt.
 
-STRUCTURE_AND_SCORE_PERSON replaces the separate person research structuring
-and campaign scoring steps. It takes raw grounded research text plus a campaign
-target and produces structured contact data, relevance scoring, and
-personalized outreach hooks in one JSON call.
+``STRUCTURE_AND_SCORE_PERSON`` takes the raw grounded research text from
+the person-research worker plus a campaign target description, structures
+the research into citable fields, and scores the contact against the
+campaign target -- all in one JSON call.
+
+Follows the Strict Prompt Template (F16): explicit in-prompt JSON schema,
+field-by-field rules, type-appropriate empty values (``""``, ``[]``,
+``0``, ``false``), hard "Output ONLY JSON" rules, and good/bad output
+examples. The output schema is invariant across served-model tiers
+(Gemini 3 Pro -> 2.5 Pro -> 2.5 Flash) so the worker's parser stays
+fixed regardless of any downshift inside the api_keys pool.
+
+The schema preserved here is consumed by ``src/scoring/worker.py`` and
+written to the ``contact_campaigns`` junction table plus the
+denormalized ``contacts`` row. Field names and semantics MUST stay
+identical to keep downstream readers and the SQL schema unchanged.
 """
+
+from __future__ import annotations
 
 from src.prompts.base_context import build_system_prompt
 
+
 STRUCTURE_AND_SCORE_PERSON = build_system_prompt("""\
-## Task: Structure Research and Score Contact for Campaign
+## Task
+Structure raw person research into citable fields and score the contact's \
+fit against the campaign target description. Output a single JSON object \
+combining structured profile, scoring, and personalized outreach hooks.
 
-You have two jobs in a single pass:
-1. Structure raw person research into clean, citable fields.
-2. Score the contact's relevance against a specific campaign target and \
-generate personalized outreach hooks.
+## Inputs
+- {campaign_target}: free-text description of the campaign's ideal \
+contact (industry, role, signals, geography). The PRIMARY scoring \
+reference -- not any fixed role hierarchy.
+- {contact_name}: the contact's full name as known in the pipeline.
+- {contact_title}: the contact's job title from the discovery layer. \
+May be stale -- use the researched title when research contradicts it.
+- {company_name}: name of the contact's current employer.
+- {person_research}: raw grounded research text about this contact \
+(career history, public posts, talks, achievements, recent activity).
+- {company_summary}: enrichment summary of the contact's company \
+(industry, sustainability focus, recent events, DPP fit signals).
 
-### Campaign Target Description
+Inputs as filled by the caller follow this paragraph:
 
-{campaign_target}
+- campaign_target: {campaign_target}
+- contact_name: {contact_name}
+- contact_title: {contact_title}
+- company_name: {company_name}
+- person_research: {person_research}
+- company_summary: {company_summary}
 
-### Contact Information
+## Output Format -- EXACT
+Return ONLY a valid JSON object matching this schema. No markdown \
+fences. No prose before or after. No explanation. No preamble. The \
+object MUST contain exactly these eleven keys, in any order, and no \
+additional keys.
 
-- Name: {contact_name}
-- Job Title (may be outdated): {contact_title}
-- Company: {company_name}
+{
+  "determined_role": "string -- current role/title verified from research, max 200 chars",
+  "professional_background": "string -- 2-3 sentences on role, career, expertise, max 800 chars",
+  "achievements": "string -- specific achievements/milestones/recognitions, max 800 chars",
+  "public_activity": "string -- conference talks, articles, interviews, social posts, max 800 chars",
+  "key_topics": ["string"],
+  "relevance_signals": "string -- specific facts connecting this person to the campaign domain, max 800 chars",
+  "research_quality": "string -- exactly one of \\"high\\", \\"medium\\", \\"low\\"",
+  "context_summary": "string -- structured Role | Background | Key hooks summary, max 500 chars",
+  "relevance_score": 0,
+  "score_reasoning": "string -- 2-3 sentences explaining the score against the campaign target, max 800 chars",
+  "personalized_context": "string -- 3-5 numbered outreach hooks each citing a concrete fact, max 1500 chars"
+}
 
-### Person Research (raw grounded text)
+### Field-by-field rules
+- determined_role: the actual current role/title as verified from \
+``{person_research}``. If research contradicts ``{contact_title}``, \
+use the researched value. Use empty string "" when research does not \
+verify any current role. NEVER write "Unknown", "N/A", "Not found", or \
+any sentinel string.
+- professional_background: 2 to 3 sentences covering current role, \
+career path, and domain expertise. Factual, evidence-based, no \
+speculation. Use empty string "" if the research is too thin to write \
+even one sentence.
+- achievements: specific, citable accomplishments -- awards, product \
+launches, funding rounds, published work, named programs. Use empty \
+string "" if no achievements appear in the research. NEVER write "No \
+data found" or "None".
+- public_activity: conference talks, published articles, interviews, \
+podcasts, named social-media posts -- with the venue or publication \
+when available. Use empty string "" if none present in the research.
+- key_topics: list of 3 to 5 short topic labels the contact is \
+associated with based on the research (e.g. "circular fashion", \
+"DPP", "supply chain transparency"). Use empty list [] if no clear \
+topics emerge. Each label max 60 chars.
+- relevance_signals: specific facts from the research that connect \
+this person to the campaign target domain. Use empty string "" if \
+none. NEVER write "No relevance signals found".
+- research_quality: exactly one of "high" / "medium" / "low". "high" \
+means multiple corroborating sources with specific details; "medium" \
+means some useful info but gaps; "low" means thin or mostly generic \
+content. Use "low" if no usable research is available.
+- context_summary: concise structured summary in the format \
+"Role | Background | Key hooks". Maximum 500 characters. Use empty \
+string "" only when ``{person_research}`` is itself empty.
+- relevance_score: integer 1 to 10 per the scoring guidelines below. \
+Use 0 if no usable research is available -- the worker treats 0 as a \
+deferred-scoring sentinel and clamps stored scores to 1..10. Do NOT \
+output a string for this field; output a JSON integer.
+- score_reasoning: 2 to 3 sentences. MUST reference the campaign \
+target and the specific evidence that raised or lowered the score. \
+If research was thin, state that explicitly in the reasoning. Use \
+empty string "" only when the score itself was 0 due to no inputs.
+- personalized_context: 3 to 5 numbered outreach hooks. Each hook \
+cites one concrete fact from the research (a talk, a launch, a post, \
+a regulatory filing, a partnership) and connects it to the campaign \
+value proposition. Prioritize TIMELINE hooks -- recent events, \
+upcoming deadlines, new initiatives. Use empty string "" only when \
+no usable research is available. NEVER write generic hooks like \
+"this person could benefit from our product".
 
-{person_research}
-
-### Company Enrichment Summary
-
-{company_summary}
-
----
-
-### Part 1: Structure the Research
-
-Extract and organize the raw research into the structured fields below. \
-Use only facts present in the research text. If a field has no supporting \
-evidence, write "No data found" rather than inventing content.
-
-### Part 2: Score Against Campaign Target
-
-Score how well this contact matches the campaign target description above. \
-The campaign target is your PRIMARY reference -- not any fixed role hierarchy.
-
-#### Scoring Guidelines (1-10 scale)
-
-9-10 -- Near-perfect match: Role, expertise, and research signals align \
-directly with the campaign target. Research confirms active involvement.
-7-8 -- Strong match: Role fits well, research confirms relevant activity \
-(publications, projects, public statements).
-5-6 -- Moderate match: Tangentially relevant. Role or background partially \
+### Scoring guidelines (1 to 10 scale)
+- 9 to 10: near-perfect match. Role, expertise, and research signals \
+align directly with ``{campaign_target}``. Research confirms active \
+involvement.
+- 7 to 8: strong match. Role fits well; research confirms relevant \
+activity (publications, projects, public statements).
+- 5 to 6: moderate match. Tangential. Role or background partially \
 overlaps but the connection is not strong.
-3-4 -- Weak match: Company is relevant but role does not align with campaign \
-target. Outreach may work through internal referral.
-1-2 -- Poor match: Neither role nor background suggests relevance.
+- 3 to 4: weak match. Company is relevant but role does not align with \
+``{campaign_target}``. Outreach may work via internal referral.
+- 1 to 2: poor match. Neither role nor background suggests relevance.
 
-If research quality is low or thin, be conservative with the score. Do not \
-inflate based on assumptions. Note the data limitation in score_reasoning.
+A CEO is NOT automatically a 9. A sustainability manager is NOT \
+automatically a 7. Score against ``{campaign_target}`` only, NOT \
+against fixed role-tier buckets.
 
-### Part 3: Generate Personalized Outreach Hooks
+When research_quality is "low", be conservative -- do not inflate the \
+score on assumptions. Note the data limitation in score_reasoning.
 
-The personalized_context field is the primary input for email personalization. \
-It must contain 3-5 distinct outreach hooks as a numbered list. Each hook must:
+## Process
+1. Parse ``{person_research}`` and ``{company_summary}``. Extract only \
+facts that are stated; do not invent connecting details.
+2. Determine the current role: prefer ``{person_research}`` over \
+``{contact_title}`` when they conflict. Fall back to "" if neither is \
+verifiable.
+3. Fill professional_background, achievements, public_activity, \
+key_topics, and relevance_signals from the research evidence. Use \
+type-appropriate empty values when a field is unsupported.
+4. Set research_quality based on source breadth and specificity.
+5. Score against ``{campaign_target}`` using the 1-10 guidelines. \
+Cite the specific evidence that raised or lowered the score in \
+score_reasoning.
+6. Draft 3 to 5 personalized_context hooks. Each must cite a concrete \
+fact from the research and connect it to ``{campaign_target}``. \
+Prioritize TIMELINE events. Number them 1., 2., 3. ...
+7. Write context_summary as "Role | Background | Key hooks", max 500 \
+characters.
 
-- Cite a SPECIFIC fact: a talk, a product launch, a LinkedIn post, an \
-initiative, an achievement, a regulatory filing, a partnership announcement.
-- Prioritize TIMELINE HOOKS: recent events, upcoming deadlines, new \
-initiatives. Timeline hooks generate 3.4x more meetings than static facts.
-- Connect the cited fact to the campaign's value proposition.
-- Use the prospect's own language where possible (quote phrases from their \
-posts, talks, or interviews when available in the research).
+## Hard Rules
+- Output is JSON ONLY. No prose before or after. No markdown fences. \
+No commentary. No explanation.
+- Empty values: "" for strings, [] for lists, 0 for integers, false \
+for booleans. NEVER write "Unknown", "N/A", "TBD", "No data found", \
+"None found", or any other sentinel string.
+- Never fabricate research findings. Only reference facts present in \
+``{person_research}`` and ``{company_summary}``.
+- Never inflate the relevance_score on assumptions when \
+research_quality is "low".
+- Never use emojis anywhere in the output.
+- Never include keys not in the schema. Never omit keys. Exactly \
+eleven keys: determined_role, professional_background, achievements, \
+public_activity, key_topics, relevance_signals, research_quality, \
+context_summary, relevance_score, score_reasoning, \
+personalized_context.
+- Never include comments inside the JSON.
+- relevance_score is a JSON integer, NOT a string. key_topics is a \
+JSON array of strings, NOT a comma-separated string.
 
-Example of good personalized_context:
-```
-1. Spoke at Copenhagen Fashion Summit 2025 on "making DPP a brand storytelling \
-tool" -- directly aligned with Avelero's Passport Designer positioning.
-2. Led the launch of their circular denim program in Q1 2026 -- active in the \
-supply chain transparency space where DPP adds immediate value.
-3. LinkedIn post from March 2026 expressed frustration with "compliance-first \
-DPP vendors that ignore brand experience" -- Avelero's design-forward approach \
-is the exact counter.
-4. Company expanding into 4 new EU markets in 2026 -- mid-2028 DPP mandate \
-becomes unavoidable at this scale.
-```
+## Output Examples
+### Good output (abridged)
+{"determined_role": "Head of Sustainability", "professional_background": "Leads sustainability at a mid-market EU fashion brand. Five years at the company, previously at a circular-economy nonprofit. Owns the company's ESPR and DPP roadmap.", "achievements": "Launched the company's circular denim program in Q1 2026. Spoke at Copenhagen Fashion Summit 2025 on DPP as a brand storytelling tool. Named to BoF Sustainability 25 (2025).", "public_activity": "Copenhagen Fashion Summit 2025 talk titled \\"making DPP a brand storytelling tool\\". Quoted in Vogue Business 2026-03 on EU compliance timelines. LinkedIn post 2026-03 criticizing compliance-first DPP vendors.", "key_topics": ["DPP", "circular fashion", "supply chain transparency", "ESPR compliance"], "relevance_signals": "Public ESPR/DPP advocacy; led circular denim launch Q1 2026; on record about compliance-first vendors missing brand experience.", "research_quality": "high", "context_summary": "Head of Sustainability | 5 yrs at the brand, ex circular-economy NGO | Copenhagen Fashion Summit 2025 talk; Q1 2026 circular denim launch; LinkedIn frustration with compliance-first DPP vendors", "relevance_score": 9, "score_reasoning": "Direct match to the campaign target: owns the brand's DPP roadmap, has publicly framed DPP as a brand-storytelling tool (Avelero's exact positioning), and the Q1 2026 circular launch is a live timeline anchor for outreach.", "personalized_context": "1. Spoke at Copenhagen Fashion Summit 2025 on \\"making DPP a brand storytelling tool\\" -- directly aligned with Avelero's Passport Designer positioning.\\n2. Led the launch of the brand's circular denim program in Q1 2026 -- active in the supply-chain transparency space where DPP adds immediate value.\\n3. LinkedIn post from March 2026 expressed frustration with \\"compliance-first DPP vendors that ignore brand experience\\" -- Avelero's design-forward approach is the exact counter.\\n4. Brand expanding into 4 new EU markets in 2026 -- mid-2028 DPP mandate becomes unavoidable at this scale."}
 
-Do NOT write generic hooks like "this person could benefit from our product." \
-Every hook must reference a concrete, verifiable fact from the research.
+### Good output (thin research, low quality)
+{"determined_role": "", "professional_background": "", "achievements": "", "public_activity": "", "key_topics": [], "relevance_signals": "", "research_quality": "low", "context_summary": "", "relevance_score": 3, "score_reasoning": "Research returned no specific evidence beyond the contact's title. Conservative score reflects the data gap; no signals raised or lowered the baseline.", "personalized_context": ""}
 
-### Output Format
-
-Return a single JSON object. Nothing else.
-
-```json
-{{
-    "determined_role": "Actual current role/title verified from research",
-    "professional_background": "2-3 sentence summary of role, career, expertise",
-    "achievements": "Key achievements, milestones, recognitions -- specific and citable",
-    "public_activity": "Conference talks, articles, interviews, social posts",
-    "key_topics": ["topic1", "topic2", "topic3"],
-    "relevance_signals": "Specific facts connecting this person to DPP/sustainability/fashion-tech",
-    "research_quality": "high|medium|low",
-    "context_summary": "Concise structured summary: Role | Background | Key hooks. Max 500 chars.",
-    "relevance_score": 8,
-    "score_reasoning": "2-3 sentences explaining the score against the campaign target, citing specific evidence.",
-    "personalized_context": "3-5 specific outreach hooks as numbered list. Each cites a concrete fact. Prioritize timeline events."
-}}
-```
-
-### Field Specifications
-
-- determined_role: The actual current role/title as verified from the research. \
-If research contradicts the provided title, use the researched one.
-- professional_background: 2-3 sentences covering current role, career path, \
-and domain expertise. Factual, no speculation.
-- achievements: Specific, citable accomplishments -- awards, product launches, \
-funding rounds, published work. Write "No data found" if none in research.
-- public_activity: Conference talks, published articles, interviews, podcasts, \
-social media posts mentioned in research. Write "No data found" if none.
-- key_topics: Array of 3-5 topic strings the person is associated with based \
-on research evidence. Use short labels (e.g., "circular fashion", "DPP", \
-"supply chain transparency").
-- relevance_signals: Specific facts from the research that connect this person \
-to DPP, sustainability, fashion-tech, or the campaign target domain. Write \
-"No relevance signals found" if none.
-- research_quality: "high" if multiple corroborating sources with specific \
-details; "medium" if some useful info but gaps; "low" if thin or mostly \
-generic content.
-- context_summary: Concise structured summary in the format \
-"Role | Background | Key hooks". Maximum 500 characters. This is used as \
-a quick-reference field.
-- relevance_score: Integer 1-10 per scoring guidelines above.
-- score_reasoning: 2-3 sentences. Must reference the campaign target and \
-explain which evidence raised or lowered the score. If research was thin, \
-state that explicitly.
-- personalized_context: 3-5 specific outreach hooks as a numbered list. Each \
-hook cites a concrete fact and connects it to the campaign value proposition. \
-Prioritize timeline events (recent launches, upcoming deadlines, new roles).
-
-### Rules
-
-- Score against the campaign target, NOT fixed role hierarchies. A CEO is not \
-automatically a 9. A sustainability manager is not automatically a 7.
-- Do NOT fabricate research findings. Only reference facts present in the \
-provided research and enrichment summaries.
-- Do NOT inflate scores when research quality is low. Default to conservative \
-scoring when evidence is limited.
-- Do NOT include any text outside the JSON object.
-- Do NOT use emojis anywhere in the output.
-""")
-
-
-# ---------------------------------------------------------------------------
-# DEPRECATED -- kept for backward compatibility during migration.
-# Use STRUCTURE_AND_SCORE_PERSON instead, which combines structuring + scoring.
-# ---------------------------------------------------------------------------
-_SCORE_CONTACT_FOR_CAMPAIGN_LEGACY = build_system_prompt("""\
-## Task: Score Contact Relevance for Campaign
-
-You are evaluating how well a specific contact matches a campaign's target \
-description. The campaign target defines exactly what kind of person we want \
-to reach. Score the contact against THAT description -- not against any fixed \
-role hierarchy.
-
-### Campaign Target Description
-
-{campaign_target}
-
-### Contact Information
-
-- Name: {contact_name}
-- Job Title: {contact_title}
-- Company: {company_name}
-
-### Person Research Summary
-
-{person_research}
-
-### Company Enrichment Summary
-
-{company_summary}
-
-### Scoring Guidelines (1-10 scale)
-
-Score how well this contact matches the campaign target description above. \
-The campaign target is your PRIMARY reference.
-
-9-10 -- Near-perfect match: Role, expertise, and interests align directly \
-with campaign target. Research confirms active involvement in the domain.
-7-8 -- Strong match: Role fits well, research shows relevant signals \
-(publications, projects, public statements) reinforcing the match.
-5-6 -- Moderate match: Tangentially relevant. Role or background partially \
-overlaps but the connection is not strong.
-3-4 -- Weak match: Role does not align with campaign target, but the \
-company is relevant. Outreach may work through internal referral.
-1-2 -- Poor match: Neither role nor background suggests relevance.
-
-If person research quality is low or thin, be conservative with the score. \
-Do not inflate based on assumptions. Note the data limitation in reasoning.
-
-### Personalized Context
-
-The personalized_context field must provide a concrete outreach angle for \
-this specific person. It must:
-- Reference specific facts from the person research or company enrichment
-- Explain what hook or topic to lead with when reaching out
-- Connect the person's known interests or work to the campaign's value prop
-
-Do NOT write generic statements like "this person could benefit from our \
-product." Instead, cite a specific project, publication, public statement, \
-or role responsibility that creates a natural conversation entry point.
-
-### Output Format
-
-Return a single JSON object. Nothing else.
-
-```json
-{{
-    "relevance_score": 8,
-    "score_reasoning": "2-3 sentence explanation of why this score was assigned, referencing the campaign target and specific evidence from research.",
-    "personalized_context": "2-3 sentence outreach angle citing specific facts about this person that connect to the campaign's goals."
-}}
-```
-
-### Field Specifications
-
-- relevance_score: Integer 1-10 per scoring guidelines above.
-- score_reasoning: 2-3 sentences. Must reference the campaign target description \
-and explain which evidence raised or lowered the score. If research was thin, \
-state that explicitly.
-- personalized_context: 2-3 sentences. Must cite at least one specific fact from \
-the research or enrichment data. Must suggest a concrete outreach hook tied to \
-the campaign's value proposition.
-
-### Rules
-
-- Do NOT use fixed role-based scoring buckets. A CEO is not automatically a 9. \
-A sustainability manager is not automatically a 7. Score against the campaign \
-target description only.
-- Do NOT fabricate research findings. Only reference facts present in the \
-provided research and enrichment summaries.
-- Do NOT inflate scores when research quality is low. Default to conservative \
-scoring when evidence is limited.
-- Do NOT include any text outside the JSON object.
-- Do NOT use emojis anywhere in the output.
+### Bad outputs (do NOT do these)
+- "Here is the JSON: {...}"                                 (prose before)
+- "```json\\n{...}\\n```"                                    (markdown fence)
+- {"determined_role": "Unknown", ...}                        (sentinel string instead of "")
+- {"relevance_score": "8", ...}                              (string instead of integer)
+- {"key_topics": "DPP, circular fashion", ...}               (comma-string instead of list)
+- {"relevance_signals": "No relevance signals found", ...}   (sentinel string instead of "")
+- {"determined_role": "...", "extra_field": "..."}           (extra key not in schema)
+- {"determined_role": "..."}                                 (missing required keys)
 """)
