@@ -45,19 +45,29 @@ _BASE = ["code-execution", "function-calling"]
 # on flash may still work on flash-lite (and vice versa). Probing the
 # whole surface gives the manager a richer pickable set.
 GEMINI_VALIDATION_MODELS: list[dict[str, Any]] = [
+    # 2.5 series
     {"name": "gemini-2.5-pro", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": _MEDIA + ["pdf"] + _BASE + ["search-grounding", "thinking"]},
-    {"name": "gemini-3-flash-preview", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
-     "features": _MEDIA + ["pdf"] + _BASE + ["thinking"]},
     {"name": "gemini-2.5-flash", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": _MEDIA + _BASE},
     {"name": "gemini-2.5-flash-lite", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": ["text"] + _BASE},
+    # 3.x preview series
+    {"name": "gemini-3-flash-preview", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
+     "features": _MEDIA + ["pdf"] + _BASE + ["thinking"]},
     {"name": "gemini-3.1-flash-lite-preview", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
+     "features": ["text"] + _BASE},
+    # 2.0 fallback series -- some older free-tier projects retained 2.0
+    # quota allocation even after 2.5/3.x got abuse-frozen. Probing
+    # these gives the manager extra fallback rungs when the newer
+    # tiers exhaust.
+    {"name": "gemini-2.0-flash", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
+     "features": _MEDIA + _BASE},
+    {"name": "gemini-2.0-flash-lite", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": ["text"] + _BASE},
     # Embedding probes -- different endpoint + body. Diagnostic showed
     # ~23% of "quota_exceeded" keys (project-frozen on generateContent)
-    # still serve embedContent. Adding these gives us an `embedding_only`
+    # still serve embedContent. Probing these gives us an `embedding_only`
     # status so we don't conflate them with truly-dead keys.
     {"name": "text-embedding-004", "endpoint": "embedContent", "max_tokens": 2048,
      "features": ["embeddings"], "kind": "embed"},
