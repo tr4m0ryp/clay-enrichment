@@ -27,8 +27,6 @@ from src.db.contact_campaigns import ContactCampaignsDB
 from src.search.brave_search import BraveSearchClient
 from src.search.searxng import SearXNGClient
 from src.search.scraper import WebScraper
-from src.people.contact_finder import ContactFinder
-from src.people.email_permutation import EmailPermutator
 from src.people.smtp_verify import SMTPVerifier
 from src.discovery.worker import (
     discovery_worker,
@@ -157,8 +155,6 @@ async def main() -> None:
     scraper = WebScraper()
 
     # Discovery utilities
-    contact_finder = ContactFinder(search_client)
-    email_permutator = EmailPermutator()
     smtp_verifier = SMTPVerifier()
 
     # Create asyncpg connection pool and DB instances
@@ -195,8 +191,7 @@ async def main() -> None:
          [config, gemini, companies_db, campaigns_db, scraper,
           search_client]),
         ("people", people_worker,
-         [config, gemini, people_dbs, contact_finder, email_permutator,
-          smtp_verifier]),
+         [config, gemini, people_dbs, smtp_verifier]),
         ("person_research", person_research_worker,
          [config, gemini, contacts_db, companies_db]),
         ("campaign_scoring", campaign_scoring_worker,
