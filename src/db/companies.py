@@ -26,6 +26,8 @@ _ALLOWED_COLUMNS = frozenset({
     "name", "website", "industry", "location", "size",
     "dpp_fit_score", "status", "source_query", "body",
     "last_enriched_at",
+    # Hunter Domain Search pattern cache (schema 009).
+    "email_pattern", "email_pattern_source",
 })
 
 
