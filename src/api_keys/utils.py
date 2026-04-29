@@ -16,31 +16,55 @@ KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"AIza[A-Za-z0-9_\-]{33,39}"),
 )
 
-# Gemini-context markers. A file containing one of these strings is
-# materially more likely to host a Gemini-enabled key. Used by the
-# scraper's per-file context filter to drop AIzaSy candidates whose
-# source file shows no Gemini fingerprints (Maps API leaks, Drive
-# scripts, YouTube tools, Translate clients are the dominant noise).
-# Lowercase comparison gives case-insensitive matching cheaply.
-_GEMINI_CONTEXT_MARKERS: tuple[str, ...] = (
-    "generatecontent",
-    "generativemodel",
-    "googlegenerativeai",
-    "google.generativeai",
-    "@google/generative-ai",
-    "genai.configure",
-    "googlegenai",
-    "gemini-1.5",
-    "gemini-2.0",
-    "gemini-2.5",
-    "gemini-3",
-    "gemini_api_key",
-    "gemini-api-key",
-    "generative_ai_key",
+# Strong Gemini-context markers: SDK class invocations, REST endpoints,
+# and Gemini-specific env-var names. Presence of any one strong marker
+# is sufficient to accept the file. These are hard to fake -- they
+# indicate the project actually wired up Gemini, not just mentions it.
+_GEMINI_STRONG_MARKERS: tuple[str, ...] = (
+    # SDK class names / methods (Python, JS, Go, Java)
+    "googlegenerativeai",          # JS SDK class
+    "google.generativeai",         # Python SDK module
+    "@google/generative-ai",       # NPM package
+    "genai.configure",             # Python init
+    "genai.generativemodel",       # Python class
+    "getgenerativemodel",          # JS / Java method
+    "googlegenai",                 # newer SDK
+    "generativemodel(",            # Python class instantiation
+    # REST endpoints leave no doubt about Gemini usage
     "generativelanguage.googleapis",
     "models/gemini",
-    "ai.google.dev",
-    "makersuite.google.com",
+    "v1beta/models/gemini",
+    "generatecontent(",            # method call
+    ".generatecontent",            # method call
+    "generate_content(",           # Python snake_case
+    # Gemini-specific env var names
+    "gemini_api_key",
+    "google_gemini_api_key",
+    "generative_ai_key",
+    "gemini-api-key",
+)
+
+# Placeholder / template / docs phrases. If any of these appear in the
+# file, treat it as a documentation stub regardless of any strong-marker
+# match -- production code rarely has these strings near a real key.
+_DEMO_REJECTION_MARKERS: tuple[str, ...] = (
+    "your_api_key_here",
+    "your-api-key-here",
+    "your_api_key:",
+    "<your_api_key>",
+    "<your-api-key>",
+    "<your_gemini_key>",
+    "<your_key>",
+    "<your-key>",
+    "your_gemini_api_key_here",
+    "replace_with_your",
+    "replace-with-your",
+    "insert your api key",
+    "your gemini key here",
+    "aizasyyour",       # common placeholder prefix in tutorials
+    "aizasydummy",
+    "aizasy_test_",
+    "key_here_replace",
 )
 
 _ALLOWED_CHARS = re.compile(r"AIza[A-Za-z0-9_-]+")
@@ -82,11 +106,24 @@ def extract_keys_from_text(text: str) -> set[str]:
 
 
 def looks_like_gemini_context(text: str) -> bool:
-    """True when the file text contains any Gemini SDK / model / env-var
-    marker. Drops AIzaSy candidates whose source file shows no Gemini
-    fingerprints; sharply increases real Gemini-yield per stored
-    candidate at the cost of total candidate volume."""
+    """True when the file looks like real Gemini-using production code.
+
+    Two-stage filter:
+    1. Reject if the file contains any obvious placeholder/template phrase
+       ('your_api_key_here', '<your_key>', etc.). These are tutorial /
+       docs stubs whose AIza tokens are by definition fake.
+    2. Accept only when the file contains a STRONG Gemini marker:
+       an SDK class name, an SDK method call, a REST URL, or a
+       Gemini-specific env var. Mere mentions of model ids
+       ('gemini-2.5') without an SDK invocation are dropped -- those
+       are usually blog posts or release notes.
+
+    Trade-off: lower total candidate volume per cycle, materially higher
+    real-yield per stored candidate.
+    """
     if not text:
         return False
     haystack = text.lower()
-    return any(m in haystack for m in _GEMINI_CONTEXT_MARKERS)
+    if any(d in haystack for d in _DEMO_REJECTION_MARKERS):
+        return False
+    return any(m in haystack for m in _GEMINI_STRONG_MARKERS)
