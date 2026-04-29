@@ -234,7 +234,12 @@ def _build_call(
         return await gemini_client.generate(
             prompt=rendered_prompt,
             user_message=user_message,
-            grounding=True,
+            # No grounding here: the brief synthesises voice from the
+            # user's own target description + sample emails, not fresh
+            # web facts. Gemini 2.5 also rejects grounding + json_mode
+            # combined (per F16), and grounded search has separate
+            # quota that's frequently exhausted on free-tier keys.
+            grounding=False,
             json_mode=True,
             # Synchronous user-facing path; let the pool exhaust the top
             # tier and descend rather than failing fast at default 5.
