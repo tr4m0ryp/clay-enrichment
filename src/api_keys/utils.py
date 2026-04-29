@@ -16,6 +16,33 @@ KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"AIza[A-Za-z0-9_\-]{33,39}"),
 )
 
+# Gemini-context markers. A file containing one of these strings is
+# materially more likely to host a Gemini-enabled key. Used by the
+# scraper's per-file context filter to drop AIzaSy candidates whose
+# source file shows no Gemini fingerprints (Maps API leaks, Drive
+# scripts, YouTube tools, Translate clients are the dominant noise).
+# Lowercase comparison gives case-insensitive matching cheaply.
+_GEMINI_CONTEXT_MARKERS: tuple[str, ...] = (
+    "generatecontent",
+    "generativemodel",
+    "googlegenerativeai",
+    "google.generativeai",
+    "@google/generative-ai",
+    "genai.configure",
+    "googlegenai",
+    "gemini-1.5",
+    "gemini-2.0",
+    "gemini-2.5",
+    "gemini-3",
+    "gemini_api_key",
+    "gemini-api-key",
+    "generative_ai_key",
+    "generativelanguage.googleapis",
+    "models/gemini",
+    "ai.google.dev",
+    "makersuite.google.com",
+)
+
 _ALLOWED_CHARS = re.compile(r"AIza[A-Za-z0-9_-]+")
 _PLACEHOLDER_PATTERNS = re.compile(
     r"(test|example|sample|demo|fake|placeholder|your_api_key"
@@ -52,3 +79,14 @@ def extract_keys_from_text(text: str) -> set[str]:
             if is_valid_key_format(match):
                 found.add(match)
     return found
+
+
+def looks_like_gemini_context(text: str) -> bool:
+    """True when the file text contains any Gemini SDK / model / env-var
+    marker. Drops AIzaSy candidates whose source file shows no Gemini
+    fingerprints; sharply increases real Gemini-yield per stored
+    candidate at the cost of total candidate volume."""
+    if not text:
+        return False
+    haystack = text.lower()
+    return any(m in haystack for m in _GEMINI_CONTEXT_MARKERS)
