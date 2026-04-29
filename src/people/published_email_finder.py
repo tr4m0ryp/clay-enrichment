@@ -150,8 +150,14 @@ async def find_published_email(
         return await gemini_client.generate(
             prompt=rendered_prompt,
             user_message=user_message,
-            grounding=True,
+            # No grounding for F16 compatibility (Gemini 2.5 rejects
+            # grounding+json_mode). Pattern construction via Hunter is
+            # the primary email source anyway; this finder only catches
+            # explicitly-published emails the model recalls from
+            # training data (team pages it saw, conference bios, etc.).
+            grounding=False,
             json_mode=True,
+            max_retries=30,
         )
 
     base_user_message = (
