@@ -29,19 +29,19 @@ async def get_supabase_pool() -> asyncpg.Pool:
     Reads the connection URL from the SUPABASE_DB_URL environment variable
     and surfaces a clear KeyError if the variable is missing.
 
-    Pool max=5 per process. We now run multiple concurrent scrapers
-    (clay-key-scrape + clay-key-gitlab-scrape + clay-key-huggingface-scrape
-    + clay-key-validate + clay-key-quota-retest can overlap). Supabase's
-    free-tier session pooler caps total clients per project at 15. With
-    5 max per process and up to 3 concurrent workloads we stay under
-    that ceiling with monitor headroom; the producer/consumer pipeline
-    works fine with 5 connections because connections are short-lived
-    and the consumer queue absorbs bursts.
+    Pool max=2 per process. We run several concurrent processes against
+    the same Supabase project: clay-pipeline (the async pipeline workers),
+    clay-brief (the FastAPI bridge), clay-key-scrape (primary GitHub
+    scraper). Supabase's free-tier session pooler caps total clients per
+    project at 15. With max=2 per process and up to ~6 concurrent processes
+    (incl. timer-driven oneshots that overlap occasionally) we stay under
+    that ceiling. Pipeline workers do mostly single-row reads/writes so
+    a max of 2 simultaneous DB connections per process is enough.
     """
     global _pool
     if _pool is None:
         url = os.environ["SUPABASE_DB_URL"]
-        _pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+        _pool = await asyncpg.create_pool(url, min_size=1, max_size=2)
     return _pool
 
 
