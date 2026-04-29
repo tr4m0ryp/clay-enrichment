@@ -11,7 +11,8 @@ Public surface preserved:
     - class ``GeminiClient`` with ``__init__(config, rate_limiter=None)``
     - ``GeminiClient.generate(prompt, user_message, model=None,
       json_mode=False, temperature=0.1, grounding=False) -> dict``
-      returning ``{"text": str, "input_tokens": int, "output_tokens": int}``
+      returning ``{"text": str, "input_tokens": int, "output_tokens": int,
+      "served_model": str}``
     - ``GeminiClient.generate_batch(prompt, items, model=None,
       json_mode=True) -> dict`` returning
       ``{"results": list, "input_tokens": int, "output_tokens": int}``
@@ -24,7 +25,18 @@ breaker subsumes the legacy rate limiter.
 When ``grounding=True``, the call attaches ``tools=[{"google_search": {}}]``
 to the REST request, restoring Google Search grounding parity with the
 legacy SDK-based client. The system prompt is forwarded as a top-level
-``system_instruction`` rather than concatenated into the user text.
+``system_instruction`` rather than concatenated into the user text. On
+Gemini 3 the combined call also accepts ``json_mode=True``; the wrapper
+no longer strips one when the other is set (see F3/R7 in
+``research/campaign_creation_redesign.md``).
+
+The ``generate()`` result dict carries ``served_model``, the model the
+pool actually used on the wire (e.g. ``"gemini-3-pro-preview"``,
+``"gemini-2.5-pro"``, ``"gemini-2.5-flash"``). It is the empty string
+``""`` when the pool did not expose this metadata. Workers that depend
+on Gemini 3-only features (combined grounded search + structured output
+in one call) branch on the module-level helper ``is_gemini_3()`` and
+fall back to a two-step path on tier downshift.
 """
 
 from __future__ import annotations
@@ -56,19 +68,53 @@ def _extract_token_counts(raw: dict) -> tuple[int, int]:
         return 0, 0
 
 
+def _extract_served_model(response: GeminiResponse) -> str:
+    """Return the model the pool actually served, or the empty string.
+
+    Prefers ``raw["modelVersion"]`` (the model Gemini reports having
+    served, which reflects any silent server-side downshift) and falls
+    back to ``response.model_name`` (the model the pool requested on the
+    wire). Returns ``""`` when neither is available so callers can rely
+    on a stable string type.
+    """
+    raw = getattr(response, "raw", None)
+    if isinstance(raw, dict):
+        version = raw.get("modelVersion")
+        if isinstance(version, str) and version:
+            return version
+    name = getattr(response, "model_name", "")
+    if isinstance(name, str):
+        return name
+    return ""
+
+
+def is_gemini_3(served_model: str) -> bool:
+    """Return ``True`` if ``served_model`` belongs to the Gemini 3 family.
+
+    Gemini 3 supports combined grounded search + structured output in a
+    single call (per F3/R7); Gemini 2.5 does not. Workers branch on this
+    to pick the single-call path versus the two-step (grounded research
+    -> non-grounded structuring) fallback when the pool downshifts the
+    tier.
+    """
+    return bool(served_model) and served_model.lower().startswith("gemini-3")
+
+
 def _build_generation_config(
     *, json_mode: bool, temperature: float, grounding: bool,
 ) -> dict:
-    """Translate legacy kwargs into the REST ``generationConfig`` dict."""
+    """Translate legacy kwargs into the REST ``generationConfig`` dict.
+
+    On Gemini 3, ``google_search`` grounding is compatible with
+    ``responseMimeType=application/json`` in a single call (per F3/R7).
+    The wrapper therefore attaches the JSON mime type whenever
+    ``json_mode`` is requested, regardless of ``grounding``. ``grounding``
+    is consumed at the call site (it controls the ``tools`` payload) and
+    is accepted here only so the keyword surface is stable.
+    """
+    del grounding  # accepted for API symmetry; no longer affects the config
     cfg: dict[str, Any] = {"temperature": temperature}
-    if grounding and json_mode:
-        # Mirror legacy behaviour: grounding takes precedence; json_mode
-        # is incompatible with Google Search grounding in the REST API.
-        logger.warning(
-            "Grounding requested with json_mode=True; ignoring json_mode "
-            "(incompatible with grounded responses)."
-        )
-    elif json_mode:
+    if json_mode:
         cfg["responseMimeType"] = "application/json"
     return cfg
 
@@ -139,7 +185,12 @@ class GeminiClient:
         """Run a single Gemini call through the pool.
 
         Returns:
-            ``{"text": str, "input_tokens": int, "output_tokens": int}``
+            ``{"text": str, "input_tokens": int, "output_tokens": int,
+            "served_model": str}``. ``served_model`` is the model the
+            pool actually used on the wire (``""`` if metadata was not
+            exposed). Workers can pass it through ``is_gemini_3()`` to
+            decide whether to take the single-call combined-tools path
+            or fall back to the two-step path on tier downshift.
 
         Raises:
             ``GeminiPoolExhausted`` when the pool circuit is open beyond
@@ -171,10 +222,12 @@ class GeminiClient:
             raise
 
         input_tokens, output_tokens = _extract_token_counts(response.raw)
+        served_model = _extract_served_model(response)
         return {
             "text": response.text or "",
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "served_model": served_model,
         }
 
     async def generate_batch(
