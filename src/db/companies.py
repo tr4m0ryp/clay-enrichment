@@ -24,8 +24,8 @@ INDUSTRY_OPTIONS = ("Fashion", "Streetwear", "Lifestyle", "Other")
 # Columns allowed in update_company to prevent SQL injection via key names.
 _ALLOWED_COLUMNS = frozenset({
     "name", "website", "industry", "location", "size",
-    "dpp_fit_score", "status", "source_query", "body",
-    "last_enriched_at",
+    "dpp_fit_score", "dpp_fit_reasoning", "status",
+    "source_query", "body", "last_enriched_at",
     # Hunter Domain Search pattern cache (schema 009).
     "email_pattern", "email_pattern_source",
 })
