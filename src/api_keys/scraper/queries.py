@@ -14,16 +14,18 @@ from datetime import datetime, timedelta
 # 1:1 port of FrogBytes_V3/lib/api-keys/scraper.ts:170-306. Order preserved
 # so query rotation indices stay stable across runs.
 _STATIC_QUERIES: list[str] = [
-    # ===== HIGH-YIELD CORE PATTERNS =====
-    # Direct API key patterns (most effective)
-    "AIzaSy",
-    "AIza",
-    # Environment variable patterns (very common)
+    # ===== GEMINI-LABELED ENV VARS (highest yield, lowest noise) =====
+    # These env-var names are Gemini-specific by convention. Files
+    # containing them are far more likely to host a Gemini-active key
+    # than generic AIzaSy hits in random Maps/Drive/YouTube projects.
     "GEMINI_API_KEY",
-    "GOOGLE_API_KEY",
     "GOOGLE_GEMINI_API_KEY",
     "GEMINI_KEY",
     "GENERATIVE_AI_KEY",
+    # GOOGLE_API_KEY kept because it's commonly used for Gemini too,
+    # but the post-extract context filter drops files that don't show
+    # any Gemini fingerprint.
+    "GOOGLE_API_KEY",
     # ===== LATEST GEMINI MODELS (2.5+) =====
     # Focus on latest models to avoid old/deprecated keys
     "gemini-1.5-pro",
@@ -40,43 +42,18 @@ _STATIC_QUERIES: list[str] = [
     "GoogleGenerativeAI",
     "generative-ai",
     "google-generativeai",
-    # ===== FILE EXTENSION TARGETING =====
-    # Target specific file types where keys are commonly leaked
-    "AIzaSy extension:env",
-    "AIzaSy extension:js",
-    "AIzaSy extension:ts",
-    "AIzaSy extension:py",
-    "AIzaSy extension:json",
-    "AIzaSy extension:yaml",
-    "AIzaSy extension:yml",
-    "AIzaSy extension:txt",
+    # ===== FILE-TYPE TARGETING (Gemini-named env files) =====
+    # Trimmed: dropped 'AIzaSy filename:test', 'AIzaSy filename:README',
+    # 'AIzaSy size:<5000', 'AIzaSy tutorial' etc. -- they pulled mostly
+    # non-Gemini Google keys (Maps/Drive/YouTube). Kept env-files where
+    # the var name itself is Gemini-specific.
     "GEMINI_API_KEY extension:env",
-    "GOOGLE_API_KEY extension:env",
-    # ===== FILENAME TARGETING =====
-    # Target specific filenames where keys are commonly found
-    "AIzaSy filename:.env",
-    "AIzaSy filename:config.js",
-    "AIzaSy filename:config.ts",
-    "AIzaSy filename:settings.json",
-    "AIzaSy filename:.env.local",
-    "AIzaSy filename:.env.example",
     "GEMINI_API_KEY filename:.env",
-    "GOOGLE_API_KEY filename:.env",
-    # ===== PATH TARGETING =====
-    # Target common paths where config files exist
-    "AIzaSy path:config",
-    "AIzaSy path:.github",
-    "AIzaSy path:src/config",
-    "AIzaSy path:lib/config",
-    "GEMINI_API_KEY path:config",
-    # ===== LANGUAGE-SPECIFIC PATTERNS =====
-    # Target specific languages with high adoption
-    "GEMINI_API_KEY language:JavaScript",
-    "GEMINI_API_KEY language:TypeScript",
+    "GEMINI_API_KEY filename:.env.local",
+    "GOOGLE_GEMINI_API_KEY filename:.env",
     "GEMINI_API_KEY language:Python",
-    "AIzaSy language:JavaScript",
-    "AIzaSy language:TypeScript",
-    "AIzaSy language:Python",
+    "GEMINI_API_KEY language:TypeScript",
+    "GEMINI_API_KEY language:JavaScript",
     # ===== CODE USAGE PATTERNS =====
     # Common variable declarations and imports
     "process.env.GEMINI_API_KEY",
@@ -112,53 +89,45 @@ _STATIC_QUERIES: list[str] = [
     "models/gemini-2.5-flash:generateContent",
     "models/gemini-2.5-pro:generateContent",
     "v1beta/models/gemini",
+    # ===== HIGH-PRECISION CO-SEARCH (Gemini SDK + AIzaSy in same file) =====
+    # Files containing both an AIzaSy and a Gemini SDK string almost
+    # always belong to a Gemini-using project. These are the highest-
+    # yield static queries we have.
+    "AIzaSy GoogleGenerativeAI",
+    "AIzaSy GoogleGenAI",
+    "AIzaSy genai.configure",
+    "AIzaSy genai.GenerativeModel",
+    "AIzaSy GenerativeModel",
+    "AIzaSy getGenerativeModel",
+    "AIzaSy generateContent",
+    "AIzaSy generate_content",
+    "AIzaSy gemini-2.5-pro",
+    "AIzaSy gemini-2.5-flash",
+    "AIzaSy gemini-3-flash-preview",
+    "AIzaSy models/gemini",
+    "AIzaSy generativelanguage.googleapis",
+    "GEMINI_API_KEY @google/generative-ai",
+    "GEMINI_API_KEY google.generativeai",
+    "GEMINI_API_KEY gemini-2.5-pro",
+    "GEMINI_API_KEY gemini-2.5-flash",
+    "GEMINI_API_KEY GoogleGenerativeAI",
+    "GEMINI_API_KEY GenerativeModel",
+    "GOOGLE_API_KEY GoogleGenerativeAI",
+    "GOOGLE_API_KEY genai.configure",
+    "process.env.GEMINI_API_KEY @google/generative-ai",
+    # ===== REST URL PATTERNS =====
+    # Keys leaked next to direct REST URLs are guaranteed Gemini context.
+    "models/gemini-2.5-flash:generateContent",
+    "models/gemini-2.5-pro:generateContent",
+    "models/gemini-3-flash-preview:generateContent",
+    "v1beta/models/gemini",
     # ===== RECENT ACTIVITY FILTERS =====
-    # Focus on recently active repositories (more likely to have valid keys)
-    "AIzaSy pushed:>2024-11-01",
-    "AIzaSy pushed:>2024-12-01",
-    "GEMINI_API_KEY pushed:>2024-11-01",
+    # Focus on recently active repos. Note: GitHub Code Search returns
+    # very few results with `pushed:>` filters because indexed code older
+    # than ~6 months gets dropped; kept only the broadest of these.
     "GEMINI_API_KEY pushed:>2024-12-01",
     "GoogleGenerativeAI pushed:>2024-11-01",
     "@google/generative-ai pushed:>2024-11-01",
-    # ===== REPOSITORY SIZE FILTERS =====
-    # Target smaller repos (more likely to have accidentally committed keys)
-    "AIzaSy size:<1000",
-    "GEMINI_API_KEY size:<1000",
-    "AIzaSy size:<5000",
-    "GEMINI_API_KEY size:<5000",
-    # ===== COMBINED PATTERNS =====
-    # High-precision combined searches
-    "AIzaSy GoogleGenerativeAI",
-    "GEMINI_API_KEY @google/generative-ai",
-    "AIzaSy gemini-1.5-pro",
-    "GEMINI_API_KEY gemini-1.5-flash",
-    "process.env.GEMINI_API_KEY @google/generative-ai",
-    # ===== TUTORIAL/EXAMPLE PATTERNS =====
-    # Educational content often contains working keys
-    "AIzaSy tutorial",
-    "AIzaSy example",
-    "GEMINI_API_KEY tutorial",
-    "GEMINI_API_KEY example",
-    "gemini api key tutorial",
-    # ===== DEPLOYMENT PATTERNS =====
-    # Keys in deployment configs
-    "AIzaSy docker-compose",
-    "AIzaSy Dockerfile",
-    "GEMINI_API_KEY docker",
-    "AIzaSy vercel",
-    "AIzaSy netlify",
-    # ===== TESTING PATTERNS =====
-    # Test files often contain real keys
-    "AIzaSy filename:test",
-    "GEMINI_API_KEY filename:test",
-    "AIzaSy path:test",
-    "AIzaSy path:tests",
-    # ===== DOCUMENTATION PATTERNS =====
-    # README and docs sometimes contain keys
-    "AIzaSy filename:README",
-    "GEMINI_API_KEY filename:README",
-    "AIzaSy path:docs",
-    "GEMINI_API_KEY path:docs",
 ]
 
 

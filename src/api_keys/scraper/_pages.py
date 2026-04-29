@@ -25,7 +25,7 @@ from src.api_keys.scraper._helpers import (
 )
 from src.api_keys.scraper.fetcher import fetch_raw_file
 from src.api_keys.types import ScrapedKey, ScrapeProgress
-from src.api_keys.utils import extract_keys_from_text
+from src.api_keys.utils import extract_keys_from_text, looks_like_gemini_context
 from src.utils.logger import get_logger
 
 
@@ -149,6 +149,11 @@ async def process_search_item(
     )
     body = await fetch_raw_file(client, html_url)
     if body is None:
+        return
+    # Bias toward Gemini-active projects: drop files where AIzaSy could
+    # appear but no Gemini SDK / model / env-var marker is present (Maps,
+    # Drive, YouTube, Translate keys dominate the residual noise).
+    if not looks_like_gemini_context(body):
         return
     found = extract_keys_from_text(body)
     for candidate in found:
