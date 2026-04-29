@@ -1,9 +1,9 @@
 [Unit]
-Description=Hourly clay key scrape
+Description=Clay key scrape every 10 minutes (race Google's GitHub Secret Scanner)
 
 [Timer]
-OnCalendar=hourly
-RandomizedDelaySec=300
+OnCalendar=*:0/10
+RandomizedDelaySec=60
 Persistent=true
 
 [Install]
