@@ -55,12 +55,30 @@ GEMINI_VALIDATION_MODELS: list[dict[str, Any]] = [
      "features": ["text"] + _BASE},
     {"name": "gemini-3.1-flash-lite-preview", "endpoint": "generateContent", "max_tokens": _MAX_TOKENS,
      "features": ["text"] + _BASE},
+    # Embedding probes -- different endpoint + body. Diagnostic showed
+    # ~23% of "quota_exceeded" keys (project-frozen on generateContent)
+    # still serve embedContent. Adding these gives us an `embedding_only`
+    # status so we don't conflate them with truly-dead keys.
+    {"name": "text-embedding-004", "endpoint": "embedContent", "max_tokens": 2048,
+     "features": ["embeddings"], "kind": "embed"},
+    {"name": "gemini-embedding-001", "endpoint": "embedContent", "max_tokens": 2048,
+     "features": ["embeddings"], "kind": "embed"},
 ]
 
+_GENERATE_MODELS = frozenset(
+    m["name"] for m in GEMINI_VALIDATION_MODELS if m.get("kind", "generate") == "generate"
+)
+_EMBED_MODELS = frozenset(
+    m["name"] for m in GEMINI_VALIDATION_MODELS if m.get("kind") == "embed"
+)
+
 _INVALID_MARKERS = ("API_KEY_INVALID", "API key not valid")
-_PROBE_BODY = {
+_PROBE_BODY_GENERATE: dict[str, Any] = {
     "contents": [{"parts": [{"text": "Hello"}]}],
     "generationConfig": {"maxOutputTokens": 10, "temperature": 0.1},
+}
+_PROBE_BODY_EMBED: dict[str, Any] = {
+    "content": {"parts": [{"text": "hi"}]},
 }
 
 # Errors that apply to the *key/project*, not just the model under test:
@@ -124,11 +142,14 @@ async def _probe_model(
     """
     url = f"{GEMINI_API_BASE}/models/{model['name']}:{model['endpoint']}"
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+    body = (
+        _PROBE_BODY_EMBED if model.get("kind") == "embed" else _PROBE_BODY_GENERATE
+    )
     loop = asyncio.get_event_loop()
     t0 = loop.time()
     try:
         response = await client.post(
-            url, headers=headers, json=_PROBE_BODY, timeout=PROBE_TIMEOUT_SECONDS
+            url, headers=headers, json=body, timeout=PROBE_TIMEOUT_SECONDS
         )
     except (httpx.TimeoutException, httpx.RequestError) as exc:
         return _cap(
@@ -194,15 +215,26 @@ async def _fetch_quota_info(
 def _derive_status(
     capabilities: list[ModelCapability], quota_remaining: Optional[int]
 ) -> ValidationStatus:
-    """Status precedence: invalid > quota_reached > quota_exceeded > valid."""
+    """Status precedence: invalid > quota_reached > valid > embedding_only >
+    quota_exceeded > invalid.
+
+    A key is `valid` if any *generate-content* model is accessible (the
+    pipeline only calls generateContent today). If no generate model is
+    accessible but at least one embed model is, the key is
+    `embedding_only` -- alive, just project-frozen on generateContent.
+    """
     if any(c.error_code == "API_KEY_INVALID" for c in capabilities):
         return "invalid"
     if quota_remaining == 0:
         return "quota_reached"
+    if any(c.is_accessible and c.model_name in _GENERATE_MODELS for c in capabilities):
+        return "valid"
+    if any(c.is_accessible and c.model_name in _EMBED_MODELS for c in capabilities):
+        return "embedding_only"
+    # No accessible model anywhere; if every probe returned 429, it's a
+    # full-key quota freeze (project-level cap). Otherwise it's invalid.
     if capabilities and all(c.error_code == "429" for c in capabilities):
         return "quota_exceeded"
-    if any(c.is_accessible for c in capabilities):
-        return "valid"
     return "invalid"
 
 
