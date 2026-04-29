@@ -1,8 +1,15 @@
-"""Layer 5 -- Campaign scoring: structure research + score per campaign."""
+"""Layer 5 -- Campaign scoring: structure research + score per campaign.
+
+Per task 013: the prompt follows the Strict Prompt Template (F16) and
+JSON parsing goes through ``retry_on_malformed_json`` (tolerant
+extractor + one retry). Worker logic is preserved -- ``MIN_DPP_FIT_SCORE``
+gate, ``_process_pair`` flow, denormalized contact + junction writes,
+score clamping, and concurrency are unchanged.
+"""
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 
 from src.config import Config
@@ -12,6 +19,7 @@ from src.db.contacts import ContactsDB
 from src.db.contact_campaigns import ContactCampaignsDB
 from src.gemini.client import GeminiClient
 from src.scoring.prompts import STRUCTURE_AND_SCORE_PERSON
+from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
 MIN_DPP_FIT_SCORE = 7
@@ -21,6 +29,22 @@ _EMPTY_COMPANY: dict = {
     "company_name": "", "industry": "Other",
     "location": "", "company_fit_score": 0,
 }
+
+_STR_FIELDS = (
+    "determined_role", "professional_background", "achievements",
+    "public_activity", "relevance_signals", "research_quality",
+    "context_summary", "personalized_context",
+)
+
+
+def _build_score(parsed: dict | None, score: int, reason: str = "") -> dict:
+    """Project a parsed JSON dict onto the worker's flat score record."""
+    p = parsed or {}
+    out = {k: str(p.get(k, "")) for k in _STR_FIELDS}
+    out["key_topics"] = p.get("key_topics", []) if parsed else []
+    out["relevance_score"] = score
+    out["score_reasoning"] = reason or str(p.get("score_reasoning", ""))
+    return out
 
 
 def _extract_contact_fields(contact: dict) -> dict:
@@ -48,14 +72,9 @@ async def _fetch_company_map(
     contacts: list[dict], companies_db: CompaniesDB,
 ) -> dict[str, dict]:
     """Pre-fetch company data for all contacts, keyed by company UUID string."""
-    needed: set[str] = set()
-    for c in contacts:
-        cid = c.get("company_id")
-        if cid:
-            needed.add(str(cid))
+    needed: set[str] = {str(c["company_id"]) for c in contacts if c.get("company_id")}
     if not needed:
         return {}
-
     result: dict[str, dict] = {}
     for status in ("Enriched", "Partially Enriched", "Contacts Found"):
         for row in await companies_db.get_companies_by_status(status):
@@ -63,6 +82,16 @@ async def _fetch_company_map(
             if pid in needed and pid not in result:
                 result[pid] = _extract_company_fields(row)
     return result
+
+
+def _coerce_score(parsed: dict, contact_name: str) -> int:
+    """Clamp the model's relevance_score to 1..10; default 0 on bad input."""
+    try:
+        return max(1, min(10, int(parsed.get("relevance_score", 0))))
+    except (TypeError, ValueError) as exc:
+        logger.warning("Scoring: bad relevance_score for '%s': %s",
+                       contact_name, exc)
+        return 0
 
 
 async def _score_with_llm(
@@ -80,39 +109,35 @@ async def _score_with_llm(
         .replace("{person_research}", person_research or "(no person research available)")
         .replace("{company_summary}", company_summary or "(no company enrichment available)")
     )
-    try:
-        result = await gemini_client.generate(
-            prompt=prompt,
-            user_message="Structure this research and score the contact for the campaign.",
+
+    async def _call(user_message: str) -> dict:
+        return await gemini_client.generate(
+            prompt=prompt, user_message=user_message,
             model=config.model_scoring, json_mode=True,
         )
-        parsed = json.loads(result["text"])
-        score = max(1, min(10, int(parsed.get("relevance_score", 0))))
-        logger.info("Scored '%s': %d (in=%d out=%d)", contact_name, score,
-                     result.get("input_tokens", 0), result.get("output_tokens", 0))
-        return {
-            "determined_role": str(parsed.get("determined_role", "")),
-            "professional_background": str(parsed.get("professional_background", "")),
-            "achievements": str(parsed.get("achievements", "")),
-            "public_activity": str(parsed.get("public_activity", "")),
-            "key_topics": parsed.get("key_topics", []),
-            "relevance_signals": str(parsed.get("relevance_signals", "")),
-            "research_quality": str(parsed.get("research_quality", "")),
-            "context_summary": str(parsed.get("context_summary", "")),
-            "relevance_score": score,
-            "score_reasoning": str(parsed.get("score_reasoning", "")),
-            "personalized_context": str(parsed.get("personalized_context", "")),
-        }
+
+    base_msg = "Structure this research and score the contact for the campaign."
+    try:
+        result = await retry_on_malformed_json(_call, base_msg)
     except Exception as exc:
-        logger.error("Scoring failed for '%s': %s", contact_name, exc)
-        return {
-            "determined_role": "", "professional_background": "",
-            "achievements": "", "public_activity": "",
-            "key_topics": [], "relevance_signals": "",
-            "research_quality": "", "context_summary": "",
-            "relevance_score": 0, "score_reasoning": f"Scoring failed: {exc}",
-            "personalized_context": "",
-        }
+        return _fail(contact_name, f"Scoring failed: {exc}")
+    if result is None:
+        return _fail(contact_name, "Scoring failed: malformed JSON after retry")
+    parsed, raw = result
+    if not isinstance(parsed, dict):
+        return _fail(contact_name,
+                     f"Scoring failed: parsed value type={type(parsed).__name__}")
+
+    score = _coerce_score(parsed, contact_name)
+    logger.info("Scored '%s': %d (in=%d out=%d)", contact_name, score,
+                raw.get("input_tokens", 0), raw.get("output_tokens", 0))
+    return _build_score(parsed, score)
+
+
+def _fail(contact_name: str, reason: str) -> dict:
+    """Log a scoring failure and return the empty score record."""
+    logger.error("Scoring '%s': %s", contact_name, reason)
+    return _build_score(None, 0, reason)
 
 
 async def _process_pair(
@@ -130,28 +155,17 @@ async def _process_pair(
     # Dedup: skip if already scored
     existing = await contact_campaigns_db.find_by_contact_campaign(
         contact_id, campaign_id)
-    if existing:
-        if (existing.get("relevance_score") or 0) > 0:
-            return False
+    if existing and (existing.get("relevance_score") or 0) > 0:
+        return False
 
     cf = _extract_contact_fields(contact)
     campaign_name = campaign.get("name") or ""
     campaign_target = campaign.get("target_description") or ""
 
-    # Read contact body as primary research source
-    person_research = ""
-    try:
-        person_research = await contacts_db.get_body(contact_id)
-    except Exception as exc:
-        logger.warning("Cannot read contact body '%s': %s", cf["contact_name"], exc)
-
-    # Read company body for company summary
-    company_summary = ""
-    if company_id:
-        try:
-            company_summary = await companies_db.get_body(company_id)
-        except Exception as exc:
-            logger.warning("Cannot read company body: %s", exc)
+    person_research = await _safe_body(contacts_db, contact_id,
+                                       cf["contact_name"], "contact")
+    company_summary = await _safe_body(
+        companies_db, company_id, "", "company") if company_id else ""
 
     sr = await _score_with_llm(
         gemini_client, config, campaign_target, cf["contact_name"],
@@ -172,13 +186,11 @@ async def _process_pair(
             await contacts_db.update_contact(contact_id, **update_kw)
         updated_contacts.add(contact_id)
 
-    # Junction record fields
     relevance_score = max(1, min(10, int(sr.get("relevance_score", 0))))
     score_reasoning = str(sr.get("score_reasoning", ""))
     personalized_context = str(sr.get("personalized_context", ""))
     context = str(sr.get("context_summary", ""))
 
-    # Write junction record (update existing or create new)
     if existing:
         await contact_campaigns_db.update_score(
             str(existing["id"]), relevance_score,
@@ -196,12 +208,20 @@ async def _process_pair(
             company_fit_score=company_fields.get("company_fit_score", 0),
             relevance_score=relevance_score,
             score_reasoning=score_reasoning,
-            personalized_context=personalized_context,
-            context=context,
+            personalized_context=personalized_context, context=context,
         )
     logger.info("Scored '%s' x '%s': %d",
                 cf["contact_name"], campaign_name, relevance_score)
     return True
+
+
+async def _safe_body(db, row_id: str, label: str, kind: str) -> str:
+    """Fetch ``db.get_body(row_id)`` returning ``""`` on any error."""
+    try:
+        return await db.get_body(row_id)
+    except Exception as exc:
+        logger.warning("Cannot read %s body '%s': %s", kind, label, exc)
+        return ""
 
 
 async def campaign_scoring_worker(
