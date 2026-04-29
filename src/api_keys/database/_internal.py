@@ -40,6 +40,7 @@ ALLOWED_SERVICES: frozenset[str] = frozenset(
         "manager",
         "gemini_tier_manager",
         "recovery_probe",
+        "quota_retest",
     }
 )
 
