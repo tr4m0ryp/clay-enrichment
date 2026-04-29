@@ -42,6 +42,7 @@ ALLOWED_SERVICES: frozenset[str] = frozenset(
         "recovery_probe",
         "quota_retest",
         "gitlab_scraper",
+        "huggingface_scraper",
     }
 )
 
