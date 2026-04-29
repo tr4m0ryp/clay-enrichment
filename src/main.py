@@ -186,7 +186,7 @@ async def main() -> None:
 
     workers = [
         ("discovery", discovery_worker,
-         [config, gemini, discovery_dbs, search_client]),
+         [config, gemini, discovery_dbs]),
         ("enrichment", enrichment_worker,
          [config, gemini, companies_db, campaigns_db]),
         ("people", people_worker,

@@ -1,26 +1,38 @@
-"""
-Layer 1: Company Discovery Worker.
+"""Discovery worker -- continuous loop, 13-strategy rotation.
 
-Continuous async loop that polls active campaigns from Postgres, generates
-search queries via Gemini, runs searches via SearXNG (self-hosted meta-search),
-extracts company names from results, and writes new companies to the
-Companies DB with dedup.
+Per research F4/F9/F15: each cycle, for each active campaign, pick the
+strategy at ``campaigns.discovery_strategy_index % 13`` and run one
+Gemini grounded structured call. Increment the index after the cycle.
+After a full rotation the loop restarts from S01 -- but timeline-driven
+strategies surface different companies because the world has moved.
+
+The legacy 3-step pipeline (Gemini query-gen -> SearXNG/Brave search ->
+Gemini parse) is gone; this worker no longer takes a search client.
 """
+
+from __future__ import annotations
 
 import asyncio
-import json
+import logging
 from dataclasses import dataclass
-from typing import Any
+from uuid import UUID
 
 from src.db.campaigns import CampaignsDB
 from src.db.companies import CompaniesDB
+from src.discovery.strategies import (
+    STRATEGIES,
+    Strategy,
+    StrategyContext,
+    pick_strategy,
+)
 from src.gemini.client import GeminiClient
-from src.discovery.prompts import GENERATE_SEARCH_QUERIES, PARSE_SEARCH_RESULTS
-from src.utils.logger import get_logger
+from src.utils.json_retry import retry_on_malformed_json
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
-_CYCLE_INTERVAL_SECONDS = 300  # 5 minutes between full cycles
+_CYCLE_INTERVAL_SECONDS = 300  # 5 min between full cycles
+_EXCLUDE_CAP = 150  # most-recent N already-known names per campaign
+_TOP_SEEDS_N = 3  # top-DPP-score companies for the adjacency strategy
 
 
 @dataclass
@@ -35,241 +47,220 @@ async def discovery_worker(
     config,
     gemini_client: GeminiClient,
     db_clients: DBClients,
-    search_client: Any,
 ) -> None:
-    """Continuous discovery loop. Runs forever, polling for active campaigns."""
+    """Continuous discovery loop. Runs forever, polling for active campaigns.
+
+    One strategy per active campaign per cycle. The strategy index is
+    advanced regardless of whether new companies were discovered, so the
+    rotation always progresses.
+    """
+    del config  # accepted for interface symmetry; no longer read here.
+    logger.info("Discovery worker started (13-strategy rotation)")
     while True:
         try:
             campaigns = await db_clients.campaigns.get_active_campaigns()
             logger.info(
-                "Discovery cycle: found %d active campaigns", len(campaigns)
+                "Discovery cycle: found %d active campaigns", len(campaigns),
             )
+            for campaign in campaigns:
+                try:
+                    await _discover_one_strategy(
+                        campaign, gemini_client, db_clients,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Discovery: error on campaign '%s'",
+                        campaign.get("name", "?"),
+                    )
         except Exception:
-            logger.exception("Failed to fetch active campaigns, retrying next cycle")
-            await asyncio.sleep(_CYCLE_INTERVAL_SECONDS)
-            continue
-
-        for campaign in campaigns:
-            try:
-                await discover_companies_for_campaign(
-                    campaign, config, gemini_client, db_clients, search_client
-                )
-            except Exception:
-                campaign_name = campaign["name"]
-                logger.exception(
-                    "Error processing campaign '%s', continuing to next",
-                    campaign_name,
-                )
-
+            logger.exception("Discovery cycle error")
         await asyncio.sleep(_CYCLE_INTERVAL_SECONDS)
 
 
-async def discover_companies_for_campaign(
+async def _discover_one_strategy(
     campaign: dict,
-    config,
     gemini_client: GeminiClient,
-    db_clients: DBClients,
-    search_client: Any,
+    dbs: DBClients,
 ) -> None:
-    """Run the full discovery pipeline for a single campaign."""
-    campaign_id = campaign["id"]
-    campaign_name = campaign["name"]
-    campaign_target = campaign.get("target_description", "")
-
-    if not campaign_target:
+    """Run one strategy for one campaign, then advance the rotation."""
+    campaign_id = str(campaign["id"])
+    campaign_name = campaign.get("name", "?")
+    icp_brief = (campaign.get("icp_brief") or "").strip()
+    target_desc = (campaign.get("target_description") or "").strip()
+    if not (icp_brief or target_desc):
         logger.warning(
-            "Campaign '%s' has no target description, skipping", campaign_name
+            "Campaign '%s' has no ICP brief or target description, skipping",
+            campaign_name,
         )
         return
 
-    logger.info("Starting discovery for campaign '%s'", campaign_name)
+    strategy_index = int(campaign.get("discovery_strategy_index") or 0)
+    strategy = pick_strategy(strategy_index)
 
-    # -- Step 1: generate search queries via Gemini (one batched call) -------
-    queries = await _generate_search_queries(
-        gemini_client, config, campaign_target
+    excluded = await _build_exclude_list(
+        dbs.companies, campaign_id, _EXCLUDE_CAP,
     )
-    if not queries:
-        logger.warning(
-            "No queries generated for campaign '%s'", campaign_name
-        )
+    top_seeds = await _build_top_seeds(
+        dbs.companies, campaign_id, n=_TOP_SEEDS_N,
+    )
+
+    ctx = StrategyContext(
+        icp_brief=icp_brief,
+        target_description=target_desc,
+        excluded_names=excluded,
+        top_seeds=top_seeds,
+        # Sub-rotation indices are derived from the same outer counter so
+        # that S07/S08/S09 also rotate through their value lists across
+        # cycles. They wrap independently inside each strategy.
+        geo_index=strategy_index,
+        sub_niche_index=strategy_index,
+        cert_index=strategy_index,
+    )
+
+    logger.info(
+        "Discovery: campaign='%s' strategy=%s (%s) excluded=%d seeds=%d",
+        campaign_name, strategy.id, strategy.name,
+        len(excluded), len(top_seeds),
+    )
+
+    parsed = await _call_strategy(strategy, ctx, gemini_client)
+    if parsed is None:
+        await dbs.campaigns.increment_discovery_strategy_index(campaign_id)
         return
 
-    logger.info(
-        "Campaign '%s': generated %d search queries", campaign_name, len(queries)
-    )
-
-    # -- Step 2: execute searches --------------------------------------------
-    all_results = await _execute_searches(search_client, queries)
-    if not all_results:
-        logger.warning(
-            "Campaign '%s': no search results returned", campaign_name
-        )
-        return
-
-    logger.info(
-        "Campaign '%s': collected %d search results across %d queries",
-        campaign_name,
-        len(all_results),
-        len(queries),
-    )
-
-    # -- Step 3: parse results via Gemini (one batched call) -----------------
-    companies = await _parse_search_results(
-        gemini_client, config, campaign_target, all_results
-    )
-    if not companies:
-        logger.info(
-            "Campaign '%s': no companies extracted from results", campaign_name
-        )
-        return
-
-    logger.info(
-        "Campaign '%s': extracted %d companies from search results",
-        campaign_name,
-        len(companies),
-    )
-
-    # -- Step 4: dedup and write to database ----------------------------------
-    new_count, existing_count = await _write_companies(
-        db_clients.companies, companies, str(campaign_id)
+    new_count = await _persist_companies(
+        parsed, strategy, campaign_id, dbs.companies,
     )
 
     logger.info(
-        "Campaign '%s' discovery complete: %d new, %d existing",
-        campaign_name,
-        new_count,
-        existing_count,
+        "Discovery: campaign='%s' strategy=%s new=%d",
+        campaign_name, strategy.id, new_count,
     )
+    await dbs.campaigns.increment_discovery_strategy_index(campaign_id)
 
 
-async def _generate_search_queries(
+async def _call_strategy(
+    strategy: Strategy,
+    ctx: StrategyContext,
     gemini_client: GeminiClient,
-    config,
-    campaign_target: str,
-) -> list[str]:
-    """Call Gemini to generate 10-20 search queries for the campaign target."""
-    prompt = GENERATE_SEARCH_QUERIES.replace("{campaign_target}", campaign_target)
-    result = await gemini_client.generate(
-        prompt=prompt,
-        user_message=campaign_target,
-        model=config.model_discovery,
-        json_mode=True,
-    )
+) -> list | None:
+    """Build the prompt, run the grounded structured call, parse JSON.
 
-    text = result["text"].strip()
+    Returns the parsed JSON list on success, or ``None`` if the call
+    failed or the output is not a list. The caller handles index
+    advancement either way.
+    """
+    system_prompt, user_message = strategy.build(ctx)
+
+    async def _call(msg: str) -> dict:
+        return await gemini_client.generate(
+            prompt=system_prompt,
+            user_message=msg,
+            grounding=True,
+            json_mode=True,
+        )
+
     try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        logger.error("Failed to parse query generation response: %s", text[:500])
-        return []
+        result = await retry_on_malformed_json(_call, user_message)
+    except Exception:
+        logger.exception(
+            "Discovery: strategy=%s Gemini call failed", strategy.id,
+        )
+        return None
 
+    if result is None:
+        logger.warning(
+            "Discovery: strategy=%s malformed JSON after retry", strategy.id,
+        )
+        return None
+
+    parsed, _raw = result
     if not isinstance(parsed, list):
-        logger.error("Expected JSON array from query generation, got %s", type(parsed))
-        return []
-
-    return [q for q in parsed if isinstance(q, str) and q.strip()]
-
-
-async def _execute_searches(
-    search_client: Any,
-    queries: list[str],
-) -> list[dict]:
-    """Execute all search queries and collect results as dicts."""
-    all_results: list[dict] = []
-    for query in queries:
-        try:
-            results = await search_client.search(query)
-            for r in results:
-                all_results.append({
-                    "title": r.title,
-                    "url": r.url,
-                    "snippet": r.snippet,
-                    "source_query": query,
-                })
-        except Exception:
-            logger.exception("Search failed for query: %s", query)
-    return all_results
+        logger.warning(
+            "Discovery: strategy=%s expected JSON array, got %s",
+            strategy.id, type(parsed).__name__,
+        )
+        return None
+    return parsed
 
 
-async def _parse_search_results(
-    gemini_client: GeminiClient,
-    config,
-    campaign_target: str,
-    results: list[dict],
-) -> list[dict]:
-    """Call Gemini to extract company names from all collected search results."""
-    results_text = json.dumps(results, indent=2)
-    prompt = (
-        PARSE_SEARCH_RESULTS
-        .replace("{campaign_target}", campaign_target)
-        .replace("{search_results}", results_text)
-    )
-    result = await gemini_client.generate(
-        prompt=prompt,
-        user_message=results_text,
-        model=config.model_discovery,
-        json_mode=True,
-    )
-
-    text = result["text"].strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        logger.error("Failed to parse company extraction response: %s", text[:500])
-        return []
-
-    if not isinstance(parsed, list):
-        logger.error("Expected JSON array from result parsing, got %s", type(parsed))
-        return []
-
-    return [
-        c for c in parsed
-        if isinstance(c, dict) and c.get("company_name")
-    ]
-
-
-async def _write_companies(
-    companies_db: CompaniesDB,
-    companies: list[dict],
+async def _persist_companies(
+    parsed: list,
+    strategy: Strategy,
     campaign_id: str,
-) -> tuple[int, int]:
-    """
-    Write discovered companies to database with dedup.
-
-    Returns (new_count, existing_count).
-    """
+    companies_db: CompaniesDB,
+) -> int:
+    """Insert or link each returned company. Returns count of new inserts."""
     new_count = 0
-    existing_count = 0
-
-    for company in companies:
-        name = company.get("company_name", "").strip()
+    source = f"{strategy.id} {strategy.name}"
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        name = (entry.get("company_name") or "").strip()
         if not name:
             continue
-
-        website = company.get("website_url", "")
-        reasoning = company.get("reasoning", "")
-
+        website = (entry.get("website_url") or "").strip()
         try:
             existing = await companies_db.find_by_name(name)
-            if existing is not None:
-                existing_count += 1
-                # create_company handles campaign linking for existing records
-                await companies_db.create_company(
-                    name=name,
-                    campaign_id=campaign_id,
-                    website=website,
-                    source_query=reasoning,
-                )
-            else:
-                result = await companies_db.create_company(
-                    name=name,
-                    campaign_id=campaign_id,
-                    website=website,
-                    source_query=reasoning,
-                )
-                if result is not None:
-                    new_count += 1
+            result = await companies_db.create_company(
+                name=name,
+                campaign_id=campaign_id,
+                website=website,
+                source_query=source,
+            )
+            if existing is None and result is not None:
+                new_count += 1
         except Exception:
-            logger.exception("Failed to write company '%s'", name)
+            logger.exception(
+                "Discovery: failed to persist company '%s'", name,
+            )
+    return new_count
 
-    return new_count, existing_count
+
+async def _build_exclude_list(
+    companies_db: CompaniesDB,
+    campaign_id: str,
+    cap: int,
+) -> list[str]:
+    """Most-recent N already-known company names linked to the campaign.
+
+    Direct ``_pool`` access mirrors the precedent in
+    ``src/person_research/worker.py`` -- there is no typed wrapper for
+    this join in ``CompaniesDB`` yet.
+    """
+    rows = await companies_db._pool.fetch(
+        """
+        SELECT c.name FROM companies c
+        JOIN company_campaigns cc ON cc.company_id = c.id
+        WHERE cc.campaign_id = $1
+        ORDER BY c.created_at DESC
+        LIMIT $2
+        """,
+        UUID(campaign_id),
+        cap,
+    )
+    return [r["name"] for r in rows if r["name"]]
+
+
+async def _build_top_seeds(
+    companies_db: CompaniesDB,
+    campaign_id: str,
+    n: int = _TOP_SEEDS_N,
+) -> list[str]:
+    """Top-DPP-score companies for the campaign (adjacency strategy S10)."""
+    rows = await companies_db._pool.fetch(
+        """
+        SELECT c.name FROM companies c
+        JOIN company_campaigns cc ON cc.company_id = c.id
+        WHERE cc.campaign_id = $1
+          AND c.dpp_fit_score IS NOT NULL
+        ORDER BY c.dpp_fit_score DESC
+        LIMIT $2
+        """,
+        UUID(campaign_id),
+        n,
+    )
+    return [r["name"] for r in rows if r["name"]]
+
+
+__all__ = ["DBClients", "discovery_worker", "STRATEGIES"]
