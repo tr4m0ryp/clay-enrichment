@@ -30,6 +30,7 @@ import httpx
 
 from src.api_keys.database import (
     insert_potential_key,
+    update_potential_key_status,
     update_system_status,
     upsert_validated_key,
 )
@@ -121,6 +122,15 @@ async def _consumer_worker(
                     try:
                         result = await validate_gemini_key(scraped.key, client=client)
                         await upsert_validated_key(db_pool, potential_id, result)
+                        # Flip potential_keys.validation_status so the
+                        # validate cron doesn't redundantly retest this
+                        # row. Without this we accumulate "orphan pending"
+                        # rows (validated in validated_keys but still
+                        # pending in potential_keys), and every cron run
+                        # re-validates them -- wasted Gemini calls.
+                        await update_potential_key_status(
+                            db_pool, potential_id, result.status,
+                        )
                         progress.validated += 1
                     except Exception as exc:  # noqa: BLE001
                         progress.validation_errors += 1
