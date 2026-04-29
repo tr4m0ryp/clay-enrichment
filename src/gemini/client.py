@@ -181,6 +181,7 @@ class GeminiClient:
         json_mode: bool = False,
         temperature: float = 0.1,
         grounding: bool = False,
+        max_retries: int | None = None,
     ) -> dict:
         """Run a single Gemini call through the pool.
 
@@ -207,12 +208,17 @@ class GeminiClient:
         )
         tools = _GOOGLE_SEARCH_TOOL if grounding else None
 
+        kwargs: dict = {
+            "generation_config": gen_config,
+            "tools": tools,
+            "system_instruction": system_instruction,
+        }
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+
         try:
             response: GeminiResponse = await gemini_generate_content(
-                user_text,
-                generation_config=gen_config,
-                tools=tools,
-                system_instruction=system_instruction,
+                user_text, **kwargs,
             )
         except GeminiPoolExhausted:
             logger.warning(

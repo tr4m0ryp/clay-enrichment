@@ -236,6 +236,9 @@ def _build_call(
             user_message=user_message,
             grounding=True,
             json_mode=True,
+            # Synchronous user-facing path; let the pool exhaust the top
+            # tier and descend rather than failing fast at default 5.
+            max_retries=30,
         )
 
     return _call
