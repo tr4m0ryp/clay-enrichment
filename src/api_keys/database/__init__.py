@@ -28,6 +28,7 @@ from src.api_keys.database.validated import (
     mark_validated_key_status,
     pick_validated_key,
     reset_consecutive_failures,
+    set_capability_cooldown,
     update_validated_capability,
     upsert_validated_key,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "increment_consecutive_failures",
     "reset_consecutive_failures",
     "update_validated_capability",
+    "set_capability_cooldown",
     "mark_validated_key_status",
     "get_active_validated_keys",
     "append_log",

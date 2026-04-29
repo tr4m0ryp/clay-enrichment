@@ -86,8 +86,13 @@ async def pick_validated_key(
     """Atomically pick a usable validated key for ``model_name`` or None.
 
     Uses FOR UPDATE SKIP LOCKED so concurrent pipeline workers never collide.
-    Filters on ``capabilities -> $1 ->> 'is_accessible' = true``, which
-    requires capabilities to be stored as a dict-by-model.
+    Filters on:
+      - ``capabilities -> $1 ->> 'is_accessible' = true`` (model is enabled
+        for this key), AND
+      - ``capabilities -> $1 ->> 'cooldown_until'`` is null OR in the past
+        (any per-minute 429 cooldown set by mark_quota_exceeded has expired).
+
+    Capabilities must be stored as a dict-by-model.
     """
     sql = """
         update validated_keys
@@ -97,6 +102,10 @@ async def pick_validated_key(
           where status = 'valid'
             and consecutive_failures < 3
             and (capabilities -> $1 ->> 'is_accessible')::bool = true
+            and (
+              (capabilities -> $1 ->> 'cooldown_until') is null
+              or (capabilities -> $1 ->> 'cooldown_until')::timestamptz < now()
+            )
           order by last_used_at nulls first
           limit 1
           for update skip locked
@@ -108,6 +117,33 @@ async def pick_validated_key(
     if row is None:
         return None
     return row["id"], row["key_value"]
+
+
+async def set_capability_cooldown(
+    pool: asyncpg.Pool,
+    validated_key_id: UUID,
+    model_name: str,
+    cooldown_seconds: float,
+) -> None:
+    """Record a per-minute rate-limit cooldown on (key, model).
+
+    Writes ``capabilities -> <model> -> cooldown_until = now() + interval``
+    as an ISO-8601 timestamp string. ``pick_validated_key`` filters this
+    out until the cooldown expires. ``is_accessible`` is left untouched
+    so the key returns to the rotation automatically.
+    """
+    sql = """
+        update validated_keys
+        set capabilities = jsonb_set(
+          coalesce(capabilities, '{}'::jsonb),
+          array[$2, 'cooldown_until'],
+          to_jsonb((now() + ($3::float * interval '1 second'))::text),
+          true
+        )
+        where id = $1
+    """
+    async with pool.acquire() as conn:
+        await conn.execute(sql, validated_key_id, model_name, float(cooldown_seconds))
 
 
 async def increment_consecutive_failures(

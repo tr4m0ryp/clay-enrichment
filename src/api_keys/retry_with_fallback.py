@@ -80,6 +80,36 @@ def _safe_json(resp: httpx.Response) -> dict:
     return {"_raw_body": body}
 
 
+def _extract_retry_after(body: dict, headers) -> Optional[float]:
+    """Extract a per-minute cooldown duration in seconds from a 429 response.
+
+    Gemini 429s include a "Please retry in Xs" string in the error message
+    (per the per-minute-throttle diagnostic). Falls back to the Retry-After
+    HTTP header (which is always integer seconds). Returns None when no
+    parseable hint is present; the manager then uses a default cooldown.
+    """
+    import re
+
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        msg = error.get("message")
+        if isinstance(msg, str):
+            m = re.search(r"retry in ([\d.]+)\s*s", msg)
+            if m:
+                try:
+                    return float(m.group(1))
+                except (TypeError, ValueError):
+                    pass
+    if headers is not None:
+        ra = headers.get("Retry-After") or headers.get("retry-after")
+        if ra:
+            try:
+                return float(ra)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
 def _is_invalid_key(body: dict) -> bool:
     """Detect ``API_KEY_INVALID`` / ``API key not valid`` in a Gemini error body."""
     error = body.get("error") if isinstance(body, dict) else None
@@ -250,9 +280,14 @@ async def gemini_generate_content(
             )
 
         if resp.status_code == 429:
-            logger.warning("gemini 429 quota: key_id=%s model=%s", prefix, model_name)
+            retry_after = _extract_retry_after(body, resp.headers)
+            logger.warning(
+                "gemini 429 quota: key_id=%s model=%s retry_after=%.1fs",
+                prefix, model_name, retry_after if retry_after is not None else -1.0,
+            )
             await _safe_mark(
-                mgr.mark_quota_exceeded(key_id, model_name), "mark_quota_exceeded"
+                mgr.mark_quota_exceeded(key_id, model_name, retry_after),
+                "mark_quota_exceeded",
             )
         elif resp.status_code in (400, 401, 403) and _is_invalid_key(body):
             logger.warning(

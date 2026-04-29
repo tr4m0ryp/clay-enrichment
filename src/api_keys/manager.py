@@ -21,6 +21,7 @@ from src.api_keys.database import (
     mark_validated_key_status,
     pick_validated_key,
     reset_consecutive_failures,
+    set_capability_cooldown,
     update_system_status,
     update_validated_capability,
 )
@@ -100,13 +101,33 @@ class KeyPoolManager:
         _ = latency_ms
         _ = model_name
 
-    async def mark_quota_exceeded(self, key_id: UUID, model_name: str) -> None:
-        """A 429 on (key, model). Disable that capability and bump failures."""
-        await update_validated_capability(
-            self._pool, key_id, model_name, is_accessible=False
+    async def mark_quota_exceeded(
+        self,
+        key_id: UUID,
+        model_name: str,
+        retry_after_seconds: float | None = None,
+    ) -> None:
+        """A 429 on (key, model) -- transient, NOT a permanent capability denial.
+
+        Per the per-minute-throttle diagnostic (every observed retry-after
+        was 1.5-52s, never longer), Gemini 429s are recoverable rate-limit
+        events, not quota exhaustion. We record a per-(key, model) cooldown
+        so ``pick_validated_key`` skips this pair until the bucket refills,
+        then the key returns to the rotation automatically. We do NOT flip
+        ``is_accessible`` to false (would permanently block the key) and do
+        NOT increment ``consecutive_failures`` (that circuit-breaker is
+        reserved for genuine errors).
+        """
+        cooldown = retry_after_seconds if retry_after_seconds and retry_after_seconds > 0 else 65.0
+        # Cap at 24h as a safety bound: even if Gemini reports a daily-window
+        # retry, we keep the value bounded so a misparsed huge number can't
+        # park a key forever.
+        cooldown = min(cooldown, 86400.0)
+        await set_capability_cooldown(self._pool, key_id, model_name, cooldown)
+        logger.info(
+            "quota_cooldown: key_id=%s model=%s cooldown=%.1fs",
+            key_id, model_name, cooldown,
         )
-        await increment_consecutive_failures(self._pool, key_id, threshold=3)
-        logger.warning("quota_exceeded: key_id=%s model=%s", key_id, model_name)
 
     async def mark_invalid(self, key_id: UUID, reason: str) -> None:
         """Mark a key as globally invalid (Gemini reported API_KEY_INVALID)."""

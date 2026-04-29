@@ -91,6 +91,14 @@ class ModelCapability:
     error_message: Optional[str] = None
     max_tokens: Optional[int] = None
     features: Optional[list[str]] = None
+    # Set when a 429 response is received with parseable rate-limit metadata.
+    # retry_after_seconds is the "Please retry in Xs" value from the error body
+    # (or the Retry-After header). quota_limit is the "limit: N" from the
+    # error body, used to distinguish project-frozen-on-this-model
+    # (limit=0, no recovery) from per-minute throttles (limit>0, recovery
+    # in retry_after_seconds).
+    retry_after_seconds: Optional[float] = None
+    quota_limit: Optional[int] = None
 
 
 @dataclass(slots=True)

@@ -58,7 +58,7 @@ def capabilities_to_dict(result: KeyValidationResult) -> dict[str, dict[str, Any
     """
     out: dict[str, dict[str, Any]] = {}
     for cap in result.capabilities:
-        out[cap.model_name] = {
+        entry: dict[str, Any] = {
             "is_accessible": cap.is_accessible,
             "response_time_ms": cap.response_time_ms,
             "error_code": cap.error_code,
@@ -66,6 +66,11 @@ def capabilities_to_dict(result: KeyValidationResult) -> dict[str, dict[str, Any
             "max_tokens": cap.max_tokens,
             "features": cap.features,
         }
+        if cap.retry_after_seconds is not None:
+            entry["retry_after_seconds"] = cap.retry_after_seconds
+        if cap.quota_limit is not None:
+            entry["quota_limit"] = cap.quota_limit
+        out[cap.model_name] = entry
     return out
 
 
