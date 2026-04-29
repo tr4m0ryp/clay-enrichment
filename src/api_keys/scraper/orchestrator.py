@@ -251,34 +251,10 @@ async def scrape_github_keys(
                 if INTER_QUERY_SLEEP > 0:
                     await asyncio.sleep(INTER_QUERY_SLEEP)
 
-            # Optional GitLab pass: shares the same consumer pool +
-            # seen_keys + results, so dups between sources are
-            # automatically de-duplicated and validated only once.
-            if os.environ.get("GITLAB_PAT"):
-                gitlab_queries = [
-                    "AIzaSy",
-                    "GEMINI_API_KEY",
-                    "GoogleGenerativeAI",
-                    "generateContent AIza",
-                    "google.generativeai",
-                    "models/gemini",
-                ]
-                logger.info(
-                    "gitlab pass: %d queries, current results=%d",
-                    len(gitlab_queries), len(results),
-                )
-                try:
-                    await scrape_gitlab_keys(
-                        queries=gitlab_queries,
-                        seen_keys=seen_keys,
-                        progress=progress,
-                        on_progress=on_progress,
-                        results=results,
-                        limit=effective_limit,
-                        out_queue=queue if do_per_key_work else None,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("gitlab pass failed: %s", exc)
+            # GitLab is now scraped by its own dedicated cron
+            # (clay-key-gitlab-scrape.timer, every 10 min) so it gets
+            # independent cadence instead of waiting for the long
+            # GitHub scrape to finish each cycle.
     finally:
         # Tell every consumer to drain + exit; then join the workers.
         for _ in range(consumer_count):
