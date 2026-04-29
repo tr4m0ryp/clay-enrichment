@@ -87,6 +87,31 @@ _STATIC_QUERIES: list[str] = [
     "new GoogleGenerativeAI(",
     "genai.configure(api_key=",
     "GoogleAI(api_key=",
+    # ===== GENERATE-CONTENT USAGE PATTERNS =====
+    # Bias toward code that actually CALLS generateContent. This filters
+    # out keys whose Google Cloud project never enabled the Gemini API
+    # (38% of our scraped corpus by error_message bucket). Keys appearing
+    # next to a generateContent call are far likelier to belong to a
+    # project that has the API enabled.
+    "AIzaSy generateContent",
+    "AIzaSy generate_content",
+    "AIzaSy generateContentStream",
+    "AIzaSy streamGenerateContent",
+    "AIzaSy getGenerativeModel",
+    "AIzaSy GenerativeModel",
+    "AIzaSy genai.GenerativeModel",
+    "AIzaSy startChat",
+    "AIzaSy sendMessage",
+    "AIzaSy models/gemini",
+    "GEMINI_API_KEY generateContent",
+    "GEMINI_API_KEY generate_content",
+    "GEMINI_API_KEY GenerativeModel",
+    "GEMINI_API_KEY getGenerativeModel",
+    "GOOGLE_API_KEY generateContent",
+    ":generateContent AIza",
+    "models/gemini-2.5-flash:generateContent",
+    "models/gemini-2.5-pro:generateContent",
+    "v1beta/models/gemini",
     # ===== RECENT ACTIVITY FILTERS =====
     # Focus on recently active repositories (more likely to have valid keys)
     "AIzaSy pushed:>2024-11-01",
