@@ -41,7 +41,7 @@ from src.api_keys.scraper._pages import (
     LOG_PREVIEW_CHARS,
     scrape_one_query,
 )
-from src.api_keys.scraper.queries import build_all_queries
+from src.api_keys.scraper.queries import build_dynamic_queries, build_static_queries
 from src.api_keys.supabase_client import get_supabase_pool
 from src.api_keys.types import ScrapedKey, ScrapeProgress
 from src.utils.logger import get_logger
@@ -163,16 +163,31 @@ async def scrape_github_keys(
     token_pool = GitHubTokenPool(db_pool)
     await token_pool.refresh_tokens()
     now = datetime.now(tz=timezone.utc)
-    all_queries = build_all_queries(now)
-    total_queries = len(all_queries)
+    # Dynamic queries (day-granular `pushed:>`) ALWAYS run first to catch
+    # fresh leaks before Google's Secret Scanner. Static portion rotates
+    # randomly so the long tail of static queries gets uneven sampling
+    # across runs (helps if a run gets interrupted before completing).
+    dynamic_queries = build_dynamic_queries(now)
+    static_queries = build_static_queries()
+    total_queries = len(dynamic_queries) + len(static_queries)
     if total_queries == 0:
         logger.error("no scraper queries available; aborting")
         return []
-    start_idx = (
-        start_query_index if start_query_index is not None
-        else random.randrange(total_queries)
-    )
-    rotated = all_queries[start_idx:] + all_queries[:start_idx]
+    if start_query_index is not None:
+        # Caller-provided index: rotate the full list as before.
+        all_queries = [*dynamic_queries, *static_queries]
+        start_idx = start_query_index
+        rotated = all_queries[start_idx:] + all_queries[:start_idx]
+    else:
+        # Default: dynamic first, then random rotation across static.
+        static_start = (
+            random.randrange(len(static_queries)) if static_queries else 0
+        )
+        rotated_static = (
+            static_queries[static_start:] + static_queries[:static_start]
+        )
+        rotated = [*dynamic_queries, *rotated_static]
+        start_idx = 0  # for system_status bookkeeping consistency
     seen_keys: set[str] = set(existing_keys) if existing_keys else set()
     results: list[ScrapedKey] = []
     progress = ScrapeProgress(total=total_queries, current_source="github-code")

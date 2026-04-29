@@ -8,7 +8,7 @@ concatenation in the order static then dynamic, matching the TS spreader.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # 1:1 port of FrogBytes_V3/lib/api-keys/scraper.ts:170-306. Order preserved
@@ -167,31 +167,54 @@ def build_static_queries() -> list[str]:
     return list(_STATIC_QUERIES)
 
 
-def build_dynamic_queries(now: datetime) -> list[str]:
-    """Return 18 month-back recency queries seeded from ``now``.
+_DAY_HORIZONS: tuple[int, ...] = (1, 2, 3, 7)
+_MONTH_HORIZONS: tuple[int, ...] = (1, 3, 6)
+_DYNAMIC_PATTERNS: tuple[str, ...] = (
+    "AIzaSy",
+    "GEMINI_API_KEY",
+    "GoogleGenerativeAI",
+    "generateContent",
+)
 
-    For each ``i in 1..6`` compute ``d = first day of (now's month - i)``
-    formatted ``YYYY-MM-DD`` and emit three queries: ``AIzaSy pushed:>{d}``,
-    ``GEMINI_API_KEY pushed:>{d}``, ``GoogleGenerativeAI pushed:>{d}``. The
-    month subtraction wraps via plain integer math so December stays
-    correct without dateutil.
+
+def build_dynamic_queries(now: datetime) -> list[str]:
+    """Recency queries biased toward freshly-pushed code.
+
+    Day-granular ``pushed:>`` filters target the narrow window where
+    leaks haven't yet been swept by Google's GitHub Secret Scanner
+    (which runs every few minutes against new commits). Month-granular
+    filters cover slightly older leaks that might still be live.
+
+    Patterns rotated against each horizon: AIzaSy, GEMINI_API_KEY,
+    GoogleGenerativeAI, generateContent. Total = (4 days + 3 months) * 4
+    patterns = 28 dynamic queries.
     """
     queries: list[str] = []
-    for months_back in range(1, 7):
-        # Mirror the JS Date(year, month - i, 1) constructor: month is
-        # zero-indexed in JS; subtracting i and letting it go negative
-        # rolls the year back. We replicate that with divmod.
+
+    # Day-back: catch the freshest leaks pre-Secret-Scanner sweep.
+    for days_back in _DAY_HORIZONS:
+        date_str = (now - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        for pattern in _DYNAMIC_PATTERNS:
+            queries.append(f"{pattern} pushed:>{date_str}")
+
+    # Month-back: slightly older fresh code that might still have live keys.
+    for months_back in _MONTH_HORIZONS:
+        # Mirror JS Date(year, month - i, 1): month is zero-indexed; let
+        # it go negative and divmod rolls the year back.
         zero_indexed_month = (now.month - 1) - months_back
         year_offset, target_month_zero = divmod(zero_indexed_month, 12)
         year = now.year + year_offset
         month = target_month_zero + 1
         date_str = f"{year:04d}-{month:02d}-01"
-        queries.append(f"AIzaSy pushed:>{date_str}")
-        queries.append(f"GEMINI_API_KEY pushed:>{date_str}")
-        queries.append(f"GoogleGenerativeAI pushed:>{date_str}")
+        for pattern in _DYNAMIC_PATTERNS:
+            queries.append(f"{pattern} pushed:>{date_str}")
+
     return queries
 
 
 def build_all_queries(now: datetime) -> list[str]:
-    """Concatenate the static + dynamic banks (static first, dynamic last)."""
-    return [*_STATIC_QUERIES, *build_dynamic_queries(now)]
+    """Concatenate the dynamic + static banks. Dynamic comes FIRST so the
+    orchestrator's per-cycle iteration hits freshly-pushed code before
+    Google's Secret Scanner can revoke it. Callers should NOT rotate
+    these by a random index -- doing so leaks the dynamic-first ordering."""
+    return [*build_dynamic_queries(now), *_STATIC_QUERIES]
