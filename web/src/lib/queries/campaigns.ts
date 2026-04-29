@@ -102,3 +102,41 @@ export async function insertCampaign(name: string, targetDescription: string) {
     .insert({ name, target_description: targetDescription });
   if (error) throw new Error(error.message);
 }
+
+// Insert with the full brief fields written in one shot. Used by the
+// /campaigns/new flow's Approve action -- keeps the icp_brief / voice
+// profile / banned_phrases / sample subject + body persisted alongside
+// the original name + target_description. Returns the new row's id so
+// the caller can redirect to /campaigns/[id].
+export interface InsertCampaignFullArgs {
+  name: string;
+  target_description: string;
+  email_style_profile: string;
+  sample_email_subject: string;
+  sample_email_body: string;
+  icp_brief: string;
+  banned_phrases: string[];
+}
+
+export async function insertCampaignFull(
+  args: InsertCampaignFullArgs,
+): Promise<string> {
+  const { data, error } = await client()
+    .from("campaigns")
+    .insert({
+      name: args.name,
+      target_description: args.target_description,
+      email_style_profile: args.email_style_profile,
+      sample_email_subject: args.sample_email_subject,
+      sample_email_body: args.sample_email_body,
+      icp_brief: args.icp_brief,
+      banned_phrases: args.banned_phrases,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  if (!data || typeof data.id !== "string") {
+    throw new Error("insertCampaignFull returned no id");
+  }
+  return data.id;
+}
