@@ -84,15 +84,23 @@ class ContactCampaignsDB:
         self, campaign_id: str, min_score: float = 7.0
     ) -> list[dict]:
         """
-        Return entries with both relevance_score AND company_fit_score >= min_score.
+        Return entries with both relevance_score AND company_fit_score >= min_score
+        AND a verified email address. This is the source query for email_gen
+        and outreach -- generating emails for unverified addresses wastes
+        Gemini calls on contacts that can never be sent.
 
-        This is the critical leads query used to select contacts for outreach.
+        The verified-email gate is enforced via the contacts table join
+        (denormalised email_verified on contact_campaigns may be stale
+        because resolution happens after the junction row is created).
         """
         rows = await self._pool.fetch(
-            "SELECT * FROM contact_campaigns "
-            "WHERE campaign_id = $1 "
-            "AND relevance_score >= $2 "
-            "AND company_fit_score >= $2",
+            "SELECT cc.* FROM contact_campaigns cc "
+            "JOIN contacts c ON cc.contact_id = c.id "
+            "WHERE cc.campaign_id = $1 "
+            "  AND cc.relevance_score >= $2 "
+            "  AND cc.company_fit_score >= $2 "
+            "  AND c.email IS NOT NULL AND c.email <> '' "
+            "  AND c.email_verified = true",
             campaign_id,
             min_score,
         )
