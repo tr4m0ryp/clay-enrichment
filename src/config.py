@@ -35,6 +35,7 @@ class Config:
 
     # Hunter.io (Domain Search -- email pattern lookup; free tier 50/month)
     hunter_api_key: str = ""
+    myemailverifier_api_key: str = ""
 
     # Email
     smtp_host: str = ""
@@ -80,6 +81,7 @@ def _load_config() -> Config:
         searxng_url=os.environ.get("SEARXNG_URL", "http://localhost:8888").strip(),
         brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
         hunter_api_key=os.environ.get("HUNTER_API_KEY", "").strip(),
+        myemailverifier_api_key=os.environ.get("MYEMAILVERIFIER_API_KEY", "").strip(),
         smtp_host=os.environ.get("SMTP_HOST", "").strip(),
         smtp_port=int(os.environ.get("SMTP_PORT", "587")),
         senders=_discover_senders(),

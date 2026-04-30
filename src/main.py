@@ -25,6 +25,7 @@ from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
 from src.db.emails import EmailsDB
 from src.db.contact_campaigns import ContactCampaignsDB
+from src.people.email_verifier_api import MyEmailVerifierClient
 from src.people.smtp_verify import SMTPVerifier
 from src.discovery.worker import (
     discovery_worker,
@@ -150,8 +151,16 @@ async def main() -> None:
     # Core clients
     gemini = GeminiClient(config, rate_limiter)
 
-    # Discovery utilities
-    smtp_verifier = SMTPVerifier()
+    # Email verifier: prefer the HTTP-API client (MyEmailVerifier) when
+    # a key is configured, since GCP and most cloud VMs block outbound
+    # port 25 which the SMTP RCPT TO probe relies on. Falls back to the
+    # SMTP probe (kept for environments where 25 is open).
+    if config.myemailverifier_api_key:
+        smtp_verifier = MyEmailVerifierClient(config.myemailverifier_api_key)
+        logger.info("Email verifier: MyEmailVerifier (HTTP API)")
+    else:
+        smtp_verifier = SMTPVerifier()
+        logger.info("Email verifier: SMTPVerifier (port 25 RCPT TO probe)")
 
     # Create asyncpg connection pool and DB instances
     pool = await get_pool()
