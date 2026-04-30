@@ -106,15 +106,20 @@ class KeyPoolManager:
         support -- e.g. the email_resolver's grounded-finder needs
         Gemini 3 because Gemini 2.5 rejects grounding+json_mode in
         one call (F16). Walks ``models`` in the given priority order,
-        returns the first available (uuid, key, model) tuple. If every
-        listed model is exhausted, falls through to the private Tier-1
-        backup (which serves Gemini 3 by default).
+        returns the first available (uuid, key, model) tuple.
 
-        This bypasses the active-tier descent entirely -- we don't
-        descend out of the requested models because a 2.5 fallback
-        would be unusable for the caller's purpose. The cost: when
-        all requested models are 429-d, the only path forward is the
-        private key (or wait for cooldowns).
+        Cooldown handling -- the difference between "minute rate-limit"
+        and "daily quota exhausted":
+        - Minute rate-limit: 429 with retry_after < 120s. Key gets a
+          short cooldown; return None and let the caller's circuit-
+          wait loop pause. Avoids burning the private Tier-1 key on
+          a transient 30-60s throttle.
+        - Daily quota: long cooldown (hours / next reset). All keys
+          for all listed models are parked. Fall through to the
+          private backup so the pipeline can keep moving.
+
+        Concretely: if any listed model has a key cooling down within
+        the next 10 min, we wait. Otherwise -> private fallback.
         """
         for model in models:
             try:
@@ -133,9 +138,56 @@ class KeyPoolManager:
                 )
                 return key_id, key_value, model
 
+        # No model has an immediately-pickable key. Distinguish minute
+        # rate-limit (wait it out) from daily quota exhaustion (use
+        # private backup).
+        if await self._models_have_imminent_cooldown(
+            models, window_seconds=600,
+        ):
+            logger.info(
+                "model-restricted pool: %s cooling down within 10min "
+                "-- waiting instead of falling to private key",
+                ",".join(models),
+            )
+            return None
+
         return await self._try_private_fallback(
             f"models_exhausted({','.join(models)})",
         )
+
+    async def _models_have_imminent_cooldown(
+        self, models: list[str], window_seconds: int,
+    ) -> bool:
+        """Return True if any listed model has a key whose cooldown
+        ends within ``window_seconds``. Mirrors
+        ``_has_imminent_cooldown_expiry`` but filtered to a specific
+        subset of models -- so a Gemini-3-only caller doesn't wait on
+        2.5 keys that are about to recover (those don't help it).
+        """
+        if not models:
+            return False
+        sql = """
+            SELECT 1 FROM validated_keys vk,
+                 jsonb_each(vk.capabilities) AS cap(model_name, props)
+            WHERE vk.status = 'valid'
+              AND vk.consecutive_failures < 3
+              AND cap.model_name = ANY($1::text[])
+              AND (cap.props ->> 'is_accessible')::bool = true
+              AND (cap.props ->> 'cooldown_until') IS NOT NULL
+              AND (cap.props ->> 'cooldown_until')::timestamptz
+                  < (now() + ($2::int * interval '1 second'))
+            LIMIT 1
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(sql, models, int(window_seconds))
+            return row is not None
+        except Exception:
+            logger.warning(
+                "_models_have_imminent_cooldown probe failed",
+                exc_info=True,
+            )
+            return False
 
     async def _try_private_fallback(
         self, reason: str,
