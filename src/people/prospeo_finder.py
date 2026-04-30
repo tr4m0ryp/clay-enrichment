@@ -6,12 +6,18 @@ across keys, parking any key hit by 429 / INSUFFICIENT_CREDITS errors for
 an hour before retrying it (in case the limit was per-minute rather than
 monthly), and permanently disabling keys that report INVALID_API_KEY.
 
-Each enrichment returns ``email`` + ``linkedin_url`` + ``current_job_title``
-for 1 credit. Setting ``enrich_mobile=True`` costs 10x credits but also
-returns the verified mobile phone number -- gated behind the
-``PROSPEO_ENRICH_MOBILE`` env flag so cheap email+LinkedIn lookups stay
-the default at ~1000/month per 10-key pool while opt-in mobile pulls
-drop the budget to ~100/month.
+Cost model:
+  - Default call (``enrich_mobile=False``): 1 credit per match. Returns
+    email + linkedin_url + current_job_title. Phone numbers come back
+    for free WHEN Prospeo has volunteered them in their cached record
+    -- usually partial / redacted, but full numbers do appear sometimes.
+    This is the recommended mode: predictable 1-credit cost.
+  - Reveal call (``enrich_mobile=True``): 10 credits per match. Returns
+    a guaranteed full phone number (when Prospeo has one). Drops monthly
+    capacity 10x. Use only for outreach campaigns that genuinely need
+    phone-based contact.
+
+Gated behind ``PROSPEO_ENRICH_MOBILE`` env flag (default false).
 """
 
 from __future__ import annotations
