@@ -262,19 +262,54 @@ class KeyPoolManager:
         return flipped_any
 
     async def _descend_until_key(self, active: TierName) -> Optional[tuple[UUID, str, str]]:
-        """Walk the ladder picking the first key that exists, descending if not."""
+        """Walk the ladder picking the first key that exists, descending if not.
+
+        Crucially: when ``pick_validated_key`` returns None at a tier, we
+        check whether that tier has any key marked is_accessible=true
+        (regardless of cooldown). If yes, the absence of pickable keys
+        is a transient cooldown sweep -- we return None so the caller
+        can wait, instead of descending past a healthy tier toward a
+        broken one. Without this guard the active_tier got stuck at the
+        bottom rung whenever upper-tier keys cooled down simultaneously.
+        """
         cur: Optional[TierName] = active
         while cur is not None:
             picked = await pick_validated_key(self._pool, cur)
             if picked is not None:
                 key_id, key_value = picked
                 return key_id, key_value, cur
+            if await self._has_accessible_keys(cur):
+                logger.info(
+                    "tier=%s has accessible keys but all are cooling down; "
+                    "not descending", cur,
+                )
+                return None
             nxt = self._next_tier(cur)
             if nxt is None:
                 return None
             await self._descend_to(cur, nxt)
             cur = nxt
         return None
+
+    async def _has_accessible_keys(self, model: str) -> bool:
+        """Return True if any valid key has is_accessible=true on `model`,
+        regardless of cooldown_until. Used to distinguish "tier is healthy
+        but cooling down" from "tier is permanently broken / no quota."
+        """
+        sql = """
+            SELECT 1 FROM validated_keys
+            WHERE status = 'valid'
+              AND consecutive_failures < 3
+              AND (capabilities -> $1 ->> 'is_accessible')::bool = true
+            LIMIT 1
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(sql, model)
+            return row is not None
+        except Exception:
+            logger.warning("has_accessible_keys probe failed", exc_info=True)
+            return False
 
     @staticmethod
     def _next_tier(t: TierName) -> Optional[TierName]:

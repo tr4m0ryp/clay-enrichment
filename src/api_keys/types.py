@@ -46,8 +46,12 @@ TIER_LADDER: list[TierName] = [
     "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
     "gemini-3-flash-preview",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
+    # gemini-2.0-flash and gemini-2.0-flash-lite are excluded: free-tier
+    # quota for both is limit:0 -- no key can ever serve a request on
+    # those models. Including them in the ladder caused the pool to
+    # descend to a broken bottom rung whenever upper-tier keys were
+    # transiently cooling down. Re-add only if we ever pool keys whose
+    # 2.0-tier access is actually nonzero.
 ]
 
 
