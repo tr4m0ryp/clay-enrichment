@@ -73,6 +73,24 @@ class KeyPoolManager:
             last_probe_at = row["last_recovery_probe_at"] if row else None
             circuit_open_until = row["circuit_open_until"] if row else None
             if circuit_open_until is not None and circuit_open_until > now:
+                # Circuit is open -- but if we haven't probed for a while,
+                # try once before giving up. This breaks the deadlock where
+                # the pool descended to a permanently-broken bottom rung
+                # and then opened the circuit, with no path back up.
+                stale_probe = (
+                    last_probe_at is None
+                    or (now - last_probe_at) > timedelta(minutes=5)
+                )
+                if stale_probe:
+                    logger.info(
+                        "circuit open until %s -- attempting recovery probe "
+                        "(last probe %s)",
+                        circuit_open_until.isoformat(),
+                        last_probe_at.isoformat() if last_probe_at else "never",
+                    )
+                    if await self.recovery_probe():
+                        # Probe flipped active_tier up; re-read state next iter.
+                        continue
                 logger.info("circuit open until %s", circuit_open_until.isoformat())
                 return None
             picked = await self._descend_until_key(active)
@@ -296,28 +314,38 @@ class KeyPoolManager:
         await update_system_status(self._pool, _SERVICE, **fields)
 
     async def _open_circuit(self) -> None:
-        """Open the pool-level circuit (D10). Idempotent under concurrency."""
+        """Open the pool-level circuit (D10). Idempotent under concurrency.
+
+        Default cap is now ~10 minutes (was 4h-or-midnight). The longer
+        durations were appropriate when "circuit open" meant "every key
+        permanently dead until daily quota reset" -- but with the
+        cooldown-aware path (per F16/diagnostic), the circuit fires far
+        more transiently (e.g. brief windows where every tier is
+        cooling down or active_tier got stuck on a broken bottom rung).
+        Reopening every 10 min lets the pool retry tier descent +
+        recovery probes shortly after instead of getting stuck for
+        hours.
+        """
         now = _now_utc()
-        four_hours = now + timedelta(hours=4)
-        next_midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        jitter = timedelta(seconds=random.randint(0, 300))
-        midnight_with_jitter = next_midnight + timedelta(minutes=5) + jitter
-        open_until = min(four_hours, midnight_with_jitter)
+        # Default short circuit -- 10 min. Operators can override longer
+        # via KEY_POOL_CIRCUIT_MAX_COOLDOWN_SEC.
+        default_cap = timedelta(minutes=10)
         try:
-            max_cooldown = int(os.environ.get(
-                "KEY_POOL_CIRCUIT_MAX_COOLDOWN_SEC",
-                str(_DEFAULT_MAX_COOLDOWN_SEC),
+            override = int(os.environ.get(
+                "KEY_POOL_CIRCUIT_MAX_COOLDOWN_SEC", "0",
             ))
         except ValueError:
-            max_cooldown = _DEFAULT_MAX_COOLDOWN_SEC
-        open_until = min(open_until, now + timedelta(seconds=max_cooldown))
+            override = 0
+        cap = timedelta(seconds=override) if override > 0 else default_cap
+        open_until = now + cap
         await update_system_status(
             self._pool, _SERVICE,
             state="circuit_open", circuit_open_until=open_until,
         )
-        logger.error("pool circuit OPEN until %s", open_until.isoformat())
+        logger.error(
+            "pool circuit OPEN until %s (cap=%ds)",
+            open_until.isoformat(), int(cap.total_seconds()),
+        )
 
     @staticmethod
     def _should_opportunistic_probe(last_probe_at: Optional[datetime], now: datetime) -> bool:
