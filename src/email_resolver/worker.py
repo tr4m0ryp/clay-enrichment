@@ -94,7 +94,30 @@ async def _resolve_one(
     if not contact_name or not domain:
         return "", False, "none"
 
-    # 1. Pattern lookup (cached per company; one Hunter credit max).
+    first, last = split_name(contact_name)
+
+    # 1. Hunter Email Finder -- returns the actual indexed address (or
+    # Hunter's high-confidence construction). Costs 1 credit but is far
+    # more accurate than blindly applying a pattern. Threshold guards
+    # against low-confidence Hunter guesses.
+    found_email, find_score = await pattern_lookup.find_email(
+        domain, first, last,
+    )
+    if found_email:
+        verified = await _verify(found_email, smtp_verifier)
+        if verified:
+            return found_email, True, f"finder(score={find_score})"
+        # Hunter's address looked confident but didn't actually accept.
+        # Surprisingly common -- Hunter's "score" is calibrated against
+        # public-source recall, not real-time SMTP. Continue to pattern
+        # construction as fallback so we don't drop the contact entirely.
+        logger.info(
+            "email_resolver: Hunter Finder address %s did not verify; "
+            "falling back to pattern", found_email,
+        )
+
+    # 2. Pattern lookup (cached per company; one Hunter credit max per
+    # company, regardless of how many contacts it has).
     pattern = (row["email_pattern"] or "").strip()
     pattern_source = (row["email_pattern_source"] or "").strip()
     if not pattern and pattern_source != "none":
@@ -110,22 +133,22 @@ async def _resolve_one(
     if not pattern:
         return "", False, "none"
 
-    first, last = split_name(contact_name)
     candidate = construct_email(pattern, first, last, domain)
     if not candidate:
         return "", False, "none"
 
-    # 2. Verify the constructed email.
-    try:
-        result = await smtp_verifier.verify(candidate)
-        verified = bool(getattr(result, "valid", False))
-    except Exception:
-        logger.exception(
-            "email_resolver: verify failed for %s", candidate,
-        )
-        return candidate, False, "pattern"
-
+    verified = await _verify(candidate, smtp_verifier)
     return candidate, verified, "pattern"
+
+
+async def _verify(email: str, smtp_verifier: Any) -> bool:
+    """Run the verifier; swallow exceptions so one bad call doesn't crash."""
+    try:
+        result = await smtp_verifier.verify(email)
+    except Exception:
+        logger.exception("email_resolver: verify call raised for %s", email)
+        return False
+    return bool(getattr(result, "valid", False))
 
 
 async def _persist_resolution(

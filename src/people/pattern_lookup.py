@@ -24,7 +24,12 @@ from src.db.companies import CompaniesDB
 logger = logging.getLogger(__name__)
 
 HUNTER_DOMAIN_SEARCH_URL = "https://api.hunter.io/v2/domain-search"
+HUNTER_EMAIL_FINDER_URL = "https://api.hunter.io/v2/email-finder"
 TIMEOUT_SECONDS = 15.0
+# Hunter Email Finder returns a confidence score 0-100. We treat scores
+# below this as "Hunter doesn't really know the address" and fall back
+# to deterministic pattern construction.
+EMAIL_FINDER_MIN_SCORE = 60
 
 
 class PatternLookup:
@@ -155,6 +160,69 @@ class PatternLookup:
                 "PatternLookup: failed to write pattern cache for %s",
                 company_id,
             )
+
+    async def find_email(
+        self, domain: str, first: str, last: str,
+    ) -> tuple[str, int]:
+        """Hunter Email Finder lookup -- returns (email, confidence_score).
+
+        Better accuracy than pattern construction because Hunter returns
+        the actual address its crawler has indexed (or, when not indexed,
+        Hunter's own best-guess construction with a calibrated score).
+
+        Costs 1 Hunter credit per call -- intended for high-priority
+        leads only (called from the email_resolver worker after scoring).
+        Returns ("", 0) when:
+          - api_key is unset
+          - first or domain is empty
+          - Hunter returns nothing or non-200
+          - the returned confidence score is below EMAIL_FINDER_MIN_SCORE
+            (caller should fall back to deterministic construction)
+        """
+        if not self._api_key or not domain or not first:
+            return "", 0
+        params = {
+            "domain": domain,
+            "first_name": first,
+            "last_name": last or "",
+            "api_key": self._api_key,
+        }
+        timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    HUNTER_EMAIL_FINDER_URL, params=params,
+                ) as resp:
+                    body = await self._safe_json(resp) or {}
+                    if resp.status == 429:
+                        logger.warning(
+                            "Hunter Email Finder rate-limited for %s %s @ %s",
+                            first, last, domain,
+                        )
+                        return "", 0
+                    if resp.status != 200:
+                        logger.warning(
+                            "Hunter Email Finder %s for %s %s @ %s: %s",
+                            resp.status, first, last, domain,
+                            str(body)[:200],
+                        )
+                        return "", 0
+                    data = (body or {}).get("data") or {}
+                    email = (data.get("email") or "").strip()
+                    score = int(data.get("score") or 0)
+                    logger.info(
+                        "Hunter Email Finder: %s %s @ %s -> %s (score=%d)",
+                        first, last, domain, email or "(none)", score,
+                    )
+                    if email and score >= EMAIL_FINDER_MIN_SCORE:
+                        return email, score
+                    return "", score
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            logger.warning(
+                "Hunter Email Finder HTTP error for %s @ %s: %s",
+                first, domain, exc,
+            )
+            return "", 0
 
 
 def construct_email(
