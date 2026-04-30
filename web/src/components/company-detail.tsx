@@ -15,6 +15,7 @@ interface CompanyDetailProps {
   campaigns: Record<string, unknown>[];
   contacts: Record<string, unknown>[];
   backUrl: string;
+  backLabel?: string;
   campaignId?: string;
 }
 
@@ -23,6 +24,7 @@ export function CompanyDetail({
   campaigns,
   contacts,
   backUrl,
+  backLabel = "Companies",
   campaignId,
 }: CompanyDetailProps) {
   const props = [
@@ -64,7 +66,7 @@ export function CompanyDetail({
         href={backUrl}
         className="text-sm text-muted-foreground hover:text-foreground"
       >
-        &larr; Companies
+        &larr; {backLabel}
       </Link>
 
       <h1 className="text-2xl font-semibold text-foreground">{company.name as string}</h1>

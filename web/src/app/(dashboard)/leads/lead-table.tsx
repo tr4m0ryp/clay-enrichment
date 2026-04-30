@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import {
   TableCell,
@@ -22,6 +23,8 @@ export interface LeadRow {
   context: string | null;
   personalized_context: string | null;
   company_url: string | null;
+  company_id: string | null;
+  contact_id: string | null;
   email_body: string | null;
 }
 
@@ -40,7 +43,17 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
   return (
     <TableRow key={lead.id}>
       <TableCell className="font-medium">
-        {lead.company_name ?? "--"}
+        {lead.company_id && lead.company_name ? (
+          <Link
+            prefetch
+            href={`/companies/${lead.company_id}?from=leads`}
+            className="text-primary hover:underline underline-offset-4"
+          >
+            {lead.company_name}
+          </Link>
+        ) : (
+          lead.company_name ?? "--"
+        )}
       </TableCell>
       <TableCell>
         {lead.company_url ? (
@@ -56,7 +69,19 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
           <span className="text-muted-foreground">--</span>
         )}
       </TableCell>
-      <TableCell>{lead.name}</TableCell>
+      <TableCell>
+        {lead.contact_id ? (
+          <Link
+            prefetch
+            href={`/contacts/${lead.contact_id}?from=leads`}
+            className="text-primary hover:underline underline-offset-4"
+          >
+            {lead.name}
+          </Link>
+        ) : (
+          lead.name
+        )}
+      </TableCell>
       <TableCell className="text-muted-foreground">
         {lead.job_title ?? "--"}
       </TableCell>
