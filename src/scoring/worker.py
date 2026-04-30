@@ -54,7 +54,12 @@ def _extract_contact_fields(contact: dict) -> dict:
         "job_title": contact.get("job_title") or "",
         "email": contact.get("email") or "",
         "email_verified": contact.get("email_verified") or False,
-        "linkedin_url": contact.get("linkedin_url") or "",
+        # Force empty: the model cannot reliably know LinkedIn slug URLs
+        # (they redirect to dead pages). Even if a stray non-empty value
+        # leaked into contacts.linkedin_url, do NOT propagate it into the
+        # contact_campaigns junction -- that view powers the leads
+        # dashboard's clickable link.
+        "linkedin_url": "",
     }
 
 
