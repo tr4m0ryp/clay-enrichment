@@ -68,6 +68,21 @@ class Config:
     # Enrichment
     enrichment_stale_days: int = 90
 
+    # Pipeline backpressure: when more than this many high-priority leads
+    # (contact_campaigns rows with both scores >=7 and no email subject yet)
+    # are pending downstream, discovery and people workers skip their cycle
+    # so the resolver + email_gen + sender stages can catch up. 0 disables
+    # backpressure entirely (legacy behavior).
+    high_priority_backlog_threshold: int = 50
+
+    # Email resolver concurrency. Default 1 keeps the serial behavior set
+    # in commit ca753d9 (private Tier-1 backup throttle + grounded
+    # fallback timeouts). Bumping above 1 lets Prospeo lookups run in
+    # parallel but risks the regressions that fix addressed -- only raise
+    # if the high-priority backlog persistently exceeds the threshold and
+    # most resolutions hit Prospeo (not the grounded fallback).
+    email_resolver_concurrency: int = 1
+
 
 def _discover_senders() -> list:
     senders = []
@@ -118,6 +133,12 @@ def _load_config() -> Config:
         email_max_delay=int(os.environ.get("EMAIL_MAX_DELAY_SECONDS", "480")),
         database_url=os.environ.get("DATABASE_URL", "").strip(),
         enrichment_stale_days=int(os.environ.get("ENRICHMENT_STALE_DAYS", "90")),
+        high_priority_backlog_threshold=int(
+            os.environ.get("HIGH_PRIORITY_BACKLOG_THRESHOLD", "50"),
+        ),
+        email_resolver_concurrency=int(
+            os.environ.get("EMAIL_RESOLVER_CONCURRENCY", "1"),
+        ),
     )
 
     required = {

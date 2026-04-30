@@ -44,12 +44,13 @@ MIN_RESOLVE_SCORE = 7  # mirrors MIN_DPP_FIT_SCORE used elsewhere
 _CYCLE_INTERVAL_SECONDS = 240  # 4 min between cycles (was 3) -- gentler
 # pace prevents bursting through the Prospeo monthly budget when a
 # scoring batch suddenly drops 20+ high-priority leads at once.
-_CONCURRENCY = 1  # serial resolution. The Gemini-grounded fallback
-# is slow (~30-60s per call) and the private Tier-1 backup has a 2s
-# per-call throttle; running two contacts in parallel doubled the
-# throttle wait and stacked into the request timeout. Serial keeps
-# the private key serving one finder request at a time, max one
-# Prospeo call at a time -- predictable cadence.
+_DEFAULT_CONCURRENCY = 1  # serial resolution by default. The
+# Gemini-grounded fallback is slow (~30-60s per call) and the private
+# Tier-1 backup has a 2s per-call throttle; running two contacts in
+# parallel doubled the throttle wait and stacked into the request
+# timeout (commit ca753d9). Override via config.email_resolver_concurrency
+# (env EMAIL_RESOLVER_CONCURRENCY) to drain a chronic backlog faster --
+# only safe when most resolutions hit Prospeo, not the grounded fallback.
 _PER_CALL_DELAY_SECONDS = 0.6  # small jitter between consecutive
 # resolutions in the same cycle so a burst of 50 leads stretches
 # across ~30s rather than hammering Prospeo in 2-3s.
@@ -342,15 +343,20 @@ async def email_resolver_worker(
     runs on Prospeo NO_MATCHes; pass None to disable.
     """
     enrich_mobile = bool(getattr(config, "prospeo_enrich_mobile", False))
+    concurrency = max(
+        1,
+        int(getattr(config, "email_resolver_concurrency", _DEFAULT_CONCURRENCY)),
+    )
     logger.info(
         "Email resolver worker started (min_score=%d prospeo=%s "
-        "gemini=%s enrich_mobile=%s)",
+        "gemini=%s enrich_mobile=%s concurrency=%d)",
         MIN_RESOLVE_SCORE,
         "enabled" if (prospeo_finder and prospeo_finder.enabled) else "disabled",
         "enabled" if (gemini_finder and gemini_finder.enabled) else "disabled",
         enrich_mobile,
+        concurrency,
     )
-    sem = asyncio.Semaphore(_CONCURRENCY)
+    sem = asyncio.Semaphore(concurrency)
 
     async def _bounded(row: asyncpg.Record) -> None:
         async with sem:
