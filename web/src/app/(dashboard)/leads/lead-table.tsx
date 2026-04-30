@@ -115,7 +115,7 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
         {lead.prospeo_status === "found" ? (
           <Badge variant="success" dot={false}>Found</Badge>
         ) : lead.prospeo_status === "not_found" ? (
-          <Badge variant="warning" dot={false}>Not in DB</Badge>
+          <Badge variant="warning" dot={false}>NaN</Badge>
         ) : (
           <Badge variant="outline" dot={false}>Pending</Badge>
         )}
