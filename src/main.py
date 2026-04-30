@@ -194,7 +194,10 @@ async def main() -> None:
         companies=companies_db, contacts=contacts_db, pool=pool,
     )
     pattern_lookup = PatternLookup(config, companies_db)
-    prospeo_finder = ProspeoFinder(getattr(config, "prospeo_api_keys", []) or [])
+    prospeo_finder = ProspeoFinder(
+        getattr(config, "prospeo_api_keys", []) or [],
+        usage_pool=pool,
+    )
 
     # Install signal handlers
     loop = asyncio.get_running_loop()

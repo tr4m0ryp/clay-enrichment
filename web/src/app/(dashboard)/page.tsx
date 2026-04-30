@@ -5,6 +5,7 @@ import {
   getCampaignEmailTimeline,
 } from "@/lib/queries";
 import { StatsCard } from "@/components/stats-card";
+import { QuotaCard } from "@/components/quota-card";
 import { CampaignChart } from "@/components/campaign-chart";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -69,10 +70,11 @@ export default async function DashboardPage() {
           description="Total contacts discovered"
           highlight
         />
-        <StatsCard
-          title="Leads Enriched"
-          value={stats.leadsEnriched}
-          description="Enriched, researched, or email generated"
+        <QuotaCard
+          title="Prospeo Quota"
+          used={stats.prospeoUsed}
+          total={stats.prospeoTotal}
+          description="Credits spent this month"
         />
         <StatsCard
           title="Emails Ready"

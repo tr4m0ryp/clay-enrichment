@@ -22,12 +22,17 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
+import asyncpg
 
 logger = logging.getLogger(__name__)
 
 PROSPEO_ENRICH_URL = "https://api.prospeo.io/enrich-person"
 TIMEOUT_SECONDS = 30.0
 EXHAUSTED_COOLDOWN = timedelta(hours=1)
+# Per Prospeo docs: 1 credit/match, 10 credits/match when mobile
+# revealed, 0 for "free_enrichment" (lifetime account dedup).
+_CREDITS_EMAIL_ONLY = 1
+_CREDITS_WITH_MOBILE = 10
 
 
 @dataclass
@@ -64,15 +69,29 @@ class ProspeoFinder:
     codes as the signal to rotate.
     """
 
-    def __init__(self, api_keys: list[str]):
+    def __init__(
+        self,
+        api_keys: list[str],
+        usage_pool: asyncpg.Pool | None = None,
+    ):
         clean = [k.strip() for k in api_keys if k and k.strip()]
         self._keys = [_KeyState(api_key=k) for k in clean]
         self._cursor = 0
         self._lock = asyncio.Lock()
+        # Optional asyncpg pool for usage logging. When set, every
+        # credit-spending call is recorded to ``prospeo_usage`` so the
+        # dashboard can render a "X / monthly_quota" progress bar.
+        # Logging failures are swallowed -- never block a resolution
+        # because we couldn't write a metrics row.
+        self._usage_pool = usage_pool
         if not self._keys:
             logger.info("ProspeoFinder: no API keys configured -- disabled")
         else:
-            logger.info("ProspeoFinder: %d keys configured", len(self._keys))
+            logger.info(
+                "ProspeoFinder: %d keys configured (usage_logging=%s)",
+                len(self._keys),
+                "on" if usage_pool is not None else "off",
+            )
 
     @property
     def enabled(self) -> bool:
@@ -187,12 +206,22 @@ class ProspeoFinder:
             ):
                 result = self._extract(body_resp)
                 if result.email or result.linkedin_url:
+                    free_dedup = bool(body_resp.get("free_enrichment", False))
+                    credits = (
+                        0 if free_dedup
+                        else (_CREDITS_WITH_MOBILE if enrich_mobile
+                              else _CREDITS_EMAIL_ONLY)
+                    )
                     logger.info(
                         "ProspeoFinder: hit on key %s for %s %s @ %s "
-                        "(email=%s linkedin=%s phone=%s)",
+                        "(email=%s linkedin=%s phone=%s credits=%d "
+                        "free_dedup=%s)",
                         _redact(state.api_key), first_name, last_name, domain,
                         bool(result.email), bool(result.linkedin_url),
-                        bool(result.phone),
+                        bool(result.phone), credits, free_dedup,
+                    )
+                    await self._log_usage(
+                        state.api_key, credits, domain, free_dedup,
                     )
                     return result
                 # Empty result body -- treat as miss without rotating.
@@ -244,6 +273,37 @@ class ProspeoFinder:
                 except Exception:
                     parsed = None
                 return r.status, parsed
+
+    async def _log_usage(
+        self,
+        api_key: str,
+        credits: int,
+        domain: str,
+        free_dedup: bool,
+    ) -> None:
+        """Record one credit-spending Prospeo call.
+
+        Failures are swallowed -- never block a resolution because we
+        couldn't write a metrics row. The dashboard re-derives the
+        monthly counter from this table at read time.
+        """
+        if self._usage_pool is None:
+            return
+        try:
+            async with self._usage_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO prospeo_usage
+                        (key_prefix, credits, domain, free_dedup)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    _redact(api_key), int(credits), domain, bool(free_dedup),
+                )
+        except Exception:
+            logger.exception(
+                "ProspeoFinder: failed to log usage row "
+                "(non-fatal -- continuing)",
+            )
 
     @staticmethod
     def _extract(body: dict) -> ProspeoResult:
