@@ -6,9 +6,18 @@ interface QuotaCardProps {
   used: number;
   total: number;
   description?: string;
+  // Optional secondary metric -- e.g. credits used while the primary
+  // metric is API call count. Rendered small below the main number.
+  subline?: string;
 }
 
-export function QuotaCard({ title, used, total, description }: QuotaCardProps) {
+export function QuotaCard({
+  title,
+  used,
+  total,
+  description,
+  subline,
+}: QuotaCardProps) {
   const safeTotal = Math.max(total, 1);
   const pct = Math.min(100, Math.round((used / safeTotal) * 100));
   // Color the bar by burn rate: green under 60%, amber 60-85%, red beyond.
@@ -44,8 +53,13 @@ export function QuotaCard({ title, used, total, description }: QuotaCardProps) {
             style={{ width: `${pct}%` }}
           />
         </div>
+        {subline && (
+          <p className="mt-2 text-xs tabular-nums text-foreground/70">
+            {subline}
+          </p>
+        )}
         {description && (
-          <p className="mt-2 text-xs text-muted-foreground">{description}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
         )}
       </CardContent>
     </Card>

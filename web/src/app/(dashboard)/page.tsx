@@ -72,9 +72,10 @@ export default async function DashboardPage() {
         />
         <QuotaCard
           title="Prospeo Quota"
-          used={stats.prospeoUsed}
+          used={stats.prospeoCalls}
           total={stats.prospeoTotal}
-          description="Credits this month - resets on the 1st"
+          subline={`${stats.prospeoCredits.toLocaleString()} credits spent`}
+          description="API calls in the last 30 days"
         />
         <StatsCard
           title="Emails Ready"
