@@ -16,8 +16,9 @@ from the ``campaigns`` row.
 """
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
-GENERATE_EMAIL = build_system_prompt("""\
+_DEFAULT_GENERATE_EMAIL = """\
 ## Task: Generate a Personalized Cold Outreach Email
 
 You are writing a single cold email on behalf of Moussa at Avelero. The email \
@@ -194,4 +195,8 @@ NONE of the standard ban list.
 9. Count words -- must be 75-100 in the body (excluding greeting and sign-off).
 10. Verify subject is 2-4 words, under 40 characters, no exclamation marks.
 11. Output ONLY the JSON object.
-""")
+"""
+
+GENERATE_EMAIL = build_system_prompt(
+    resolve("email_generate_outreach", _DEFAULT_GENERATE_EMAIL)
+)

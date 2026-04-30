@@ -7,8 +7,9 @@ with cited facts and honest gap acknowledgements.
 """
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
-RESEARCH_COMPANY_GROUNDED = build_system_prompt("""\
+_DEFAULT_RESEARCH_COMPANY_GROUNDED = """\
 ## Task: Research Company for DPP Outreach (Grounded Search)
 
 You are a senior market researcher preparing a company intelligence brief \
@@ -99,4 +100,8 @@ verified and what additional research might uncover.
 - Do NOT use emojis anywhere in the output.
 - Do NOT include JSON -- this is a free-text research report.
 - Cite specific facts: "Founded in 2018 in Copenhagen" not "European company".
-""")
+"""
+
+RESEARCH_COMPANY_GROUNDED = build_system_prompt(
+    resolve("enrich_company_research", _DEFAULT_RESEARCH_COMPANY_GROUNDED)
+)

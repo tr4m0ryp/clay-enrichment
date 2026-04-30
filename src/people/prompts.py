@@ -3,9 +3,10 @@ Layer 3 prompts: contact extraction and structuring.
 """
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
 
-DISCOVER_CONTACTS = build_system_prompt("""\
+_DEFAULT_DISCOVER_CONTACTS = """\
 ## Task
 Recall from your training data the named decision-makers (founders, C-level, Head-of-X) currently at {company_name} ({domain}) who would be relevant for a B2B outreach campaign about {campaign_target}. Return up to 6 contacts with full names + standardized titles. NO LinkedIn URLs (you cannot reliably know them; we set them later via verified sources).
 
@@ -70,4 +71,8 @@ Return ONLY a valid JSON array matching this schema. No markdown fences. No pros
 - [{"name": "Mette Møller", "title": "CEO", "linkedin_url": "https://www.linkedin.com/in/mette-moller-12345"}] (fabricated LinkedIn slug)
 - "Here is the JSON: [...]"                                                                   (prose before)
 - "```json\\n[...]\\n```"                                                                       (markdown fence)
-""")
+"""
+
+DISCOVER_CONTACTS = build_system_prompt(
+    resolve("people_discover_contacts", _DEFAULT_DISCOVER_CONTACTS)
+)

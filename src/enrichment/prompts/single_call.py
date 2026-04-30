@@ -19,9 +19,10 @@ Template verbatim.
 from __future__ import annotations
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
 
-ENRICH_COMPANY_SINGLE_CALL = build_system_prompt("""\
+_DEFAULT_ENRICH_COMPANY_SINGLE_CALL = """\
 ## Task
 Research the target company using grounded Google Search and emit a single \
 structured DPP enrichment profile (website discovery + market research + \
@@ -174,4 +175,8 @@ EU operations and a long-running sustainability program."}
 - {"company_name": "...", "extra": "..."}  (extra keys not in schema)
 - {"company_name": "..."}              (missing required keys)
 - {"dpp_fit_score": 8, "key_selling_points": []}  (>=5 must have 3 items)
-""")
+"""
+
+ENRICH_COMPANY_SINGLE_CALL = build_system_prompt(
+    resolve("enrich_company_single_call", _DEFAULT_ENRICH_COMPANY_SINGLE_CALL)
+)

@@ -1,7 +1,9 @@
 export const dynamic = "force-dynamic";
 
 import { getSettings, getSenderAccounts } from "@/lib/queries";
-import { ApiKeysForm } from "./api-keys-form";
+import { PROMPTS } from "@/lib/prompts/registry";
+import { loadPromptDefault } from "@/lib/prompts/loader";
+import { PromptsForm, type PromptItem } from "./prompts-form";
 import { SenderEmailsForm } from "./sender-emails-form";
 import {
   Card,
@@ -11,10 +13,15 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
+const PROMPT_KEY_PREFIX = "prompt:";
+
 export default async function SettingsPage() {
-  const [settings, accounts] = await Promise.all([
+  const [settings, accounts, defaults] = await Promise.all([
     getSettings(),
     getSenderAccounts(),
+    Promise.all(
+      PROMPTS.map((p) => loadPromptDefault(p.pythonFile, p.pythonSymbol)),
+    ),
   ]);
 
   const settingsMap: Record<string, string> = {};
@@ -22,34 +29,14 @@ export default async function SettingsPage() {
     settingsMap[s.key as string] = s.value as string;
   }
 
-  // Mask API keys -- never send full values to client
-  // Fall back to process.env when the settings table has no entry
-  const apiKeyNames = [
-    "gemini_api_key",
-    "brave_search_api_key",
-    "serper_api_key",
-  ];
-  const envKeyMap: Record<string, string> = {
-    gemini_api_key: "GEMINI_API_KEY",
-    brave_search_api_key: "BRAVE_SEARCH_API_KEY",
-    serper_api_key: "SERPER_API_KEY",
-  };
-  const keyStatus: Record<string, { configured: boolean; hint: string }> = {};
-  for (const key of apiKeyNames) {
-    const envName = envKeyMap[key];
-    const val =
-      settingsMap[key] ||
-      (envName ? process.env[envName] : undefined) ||
-      "";
-    keyStatus[key] = {
-      configured: !!val,
-      hint: val
-        ? val.length <= 8
-          ? `${val.slice(0, 2)}${"*".repeat(4)}${val.slice(-2)}`
-          : `${val.slice(0, 4)}${"*".repeat(6)}${val.slice(-4)}`
-        : "",
-    };
-  }
+  const promptItems: PromptItem[] = PROMPTS.map((p, i) => ({
+    key: p.key,
+    title: p.title,
+    description: p.description,
+    category: p.category,
+    defaultText: defaults[i] ?? "",
+    overrideText: settingsMap[`${PROMPT_KEY_PREFIX}${p.key}`] ?? null,
+  }));
 
   const accountsList = accounts.map((a) => ({
     id: a.id as string,
@@ -59,18 +46,20 @@ export default async function SettingsPage() {
   }));
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <h1 className="text-lg font-semibold">Settings</h1>
 
       <Card>
         <CardHeader>
-          <CardTitle>API Keys</CardTitle>
+          <CardTitle>System Prompts</CardTitle>
           <CardDescription>
-            Manage API keys used by the enrichment pipeline.
+            Fine-tune the prompts that drive the enrichment pipeline. Each
+            prompt is grouped by the worker that uses it -- click to expand,
+            edit, and save. Restart the pipeline to apply changes.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ApiKeysForm keyStatus={keyStatus} />
+          <PromptsForm prompts={promptItems} />
         </CardContent>
       </Card>
 

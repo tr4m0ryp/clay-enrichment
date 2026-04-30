@@ -8,16 +8,31 @@ import {
   deleteSenderAccount,
   setSenderAccountActive,
 } from "@/lib/queries";
+import { PROMPTS } from "@/lib/prompts/registry";
 
-export async function saveApiKey(key: string, value: string) {
-  const allowed = ["gemini_api_key", "brave_search_api_key", "serper_api_key"];
-  if (!allowed.includes(key)) throw new Error(`Invalid key: ${key}`);
-  await upsertSetting(key, value);
+const PROMPT_KEY_PREFIX = "prompt:";
+
+function assertKnownPromptKey(key: string) {
+  if (!PROMPTS.some((p) => p.key === key)) {
+    throw new Error(`Unknown prompt key: ${key}`);
+  }
+}
+
+export async function savePrompt(key: string, value: string) {
+  assertKnownPromptKey(key);
+  const trimmed = value.replace(/\s+$/g, "");
+  if (!trimmed.trim()) {
+    // Empty value is treated as a reset.
+    await deleteSetting(`${PROMPT_KEY_PREFIX}${key}`);
+  } else {
+    await upsertSetting(`${PROMPT_KEY_PREFIX}${key}`, trimmed);
+  }
   revalidatePath("/settings");
 }
 
-export async function clearApiKey(key: string) {
-  await deleteSetting(key);
+export async function resetPrompt(key: string) {
+  assertKnownPromptKey(key);
+  await deleteSetting(`${PROMPT_KEY_PREFIX}${key}`);
   revalidatePath("/settings");
 }
 

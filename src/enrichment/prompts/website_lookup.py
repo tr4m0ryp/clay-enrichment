@@ -7,8 +7,9 @@ the company's official website URL.
 """
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
-FIND_COMPANY_WEBSITE = build_system_prompt("""\
+_DEFAULT_FIND_COMPANY_WEBSITE = """\
 ## Task: Find Official Company Website
 
 Find the official website URL for the following company:
@@ -32,4 +33,8 @@ Search for this company's official website. Return ONLY a JSON object:
 - Do NOT return search engines or aggregators
 - If you cannot find an official website, return: {{"website_url": "", "confidence": "none"}}
 - URL must be root domain (e.g. "https://example.com", not deep paths)
-""")
+"""
+
+FIND_COMPANY_WEBSITE = build_system_prompt(
+    resolve("enrich_company_website_lookup", _DEFAULT_FIND_COMPANY_WEBSITE)
+)
