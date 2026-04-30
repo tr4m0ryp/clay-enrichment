@@ -31,7 +31,12 @@ _GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "{model}:generateContent"
 )
-_DEFAULT_HTTP_TIMEOUT_SECONDS: float = 60.0
+_DEFAULT_HTTP_TIMEOUT_SECONDS: float = 240.0  # 4 min -- grounded
+# Gemini 3 calls can take 30-60s in normal conditions and occasionally
+# 90-180s when the search portion expands. The previous 60s budget was
+# too aggressive and turned slow-but-working calls into ReadTimeout
+# errors, which then counted as a finder failure. Non-grounded calls
+# finish in 1-3s anyway so the longer ceiling doesn't slow them down.
 _PROMPT_LOG_TRUNCATE: int = 200
 
 
