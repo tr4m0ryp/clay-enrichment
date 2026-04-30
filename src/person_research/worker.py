@@ -34,7 +34,10 @@ from src.utils.json_retry import retry_on_malformed_json
 logger = logging.getLogger(__name__)
 
 MIN_DPP_FIT_SCORE = 7
-_CYCLE_INTERVAL = 180  # seconds between worker cycles
+_CYCLE_INTERVAL = 300  # 5 min -- matched to people-worker pace; the
+# combined upstream cadence is now (10/4/5/5/6) min so leads reach
+# the email_resolver at a rate the Prospeo pool can actually keep up
+# with sustainably.
 _CONCURRENCY = 5  # max contacts researched in parallel per cycle
 
 _SENTINEL_STRINGS = {"unknown", "n/a", "none", "no data found"}

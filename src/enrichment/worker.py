@@ -31,7 +31,9 @@ from src.utils.json_retry import retry_on_malformed_json
 logger = logging.getLogger(__name__)
 
 _CONCURRENCY = 3
-CYCLE_SLEEP_SECONDS = 120
+CYCLE_SLEEP_SECONDS = 240  # 4 min -- doubled to match the halved
+# discovery cadence; keeps Gemini load steady and prevents over-
+# enrichment of companies that are below the DPP-fit threshold.
 
 
 async def enrichment_worker(

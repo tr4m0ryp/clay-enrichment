@@ -37,8 +37,15 @@ from src.people.prospeo_finder import ProspeoFinder, ProspeoResult
 logger = logging.getLogger(__name__)
 
 MIN_RESOLVE_SCORE = 7  # mirrors MIN_DPP_FIT_SCORE used elsewhere
-_CYCLE_INTERVAL_SECONDS = 180
-_CONCURRENCY = 3
+_CYCLE_INTERVAL_SECONDS = 240  # 4 min between cycles (was 3) -- gentler
+# pace prevents bursting through the Prospeo monthly budget when a
+# scoring batch suddenly drops 20+ high-priority leads at once.
+_CONCURRENCY = 2  # was 3 -- two parallel Prospeo calls is well under
+# Prospeo's per-key rate limit AND lets the per-call delay below
+# actually spread credit burn across the cycle window.
+_PER_CALL_DELAY_SECONDS = 0.6  # small jitter between consecutive
+# resolutions in the same cycle so a burst of 50 leads stretches
+# across ~30s rather than hammering Prospeo in 2-3s.
 
 
 @dataclass
@@ -331,6 +338,13 @@ async def email_resolver_worker(
                     db_clients, enrich_mobile=enrich_mobile,
                 )
                 await _persist_resolution(row, result, db_clients)
+                # Spread credit burn across the cycle: a small jitter
+                # after each call means a 50-row batch stretches across
+                # ~30s rather than spiking Prospeo's rate-limiter in
+                # 2-3s. The semaphore continues holding so this delay
+                # contributes to overall pacing, not just per-task.
+                if _PER_CALL_DELAY_SECONDS > 0:
+                    await asyncio.sleep(_PER_CALL_DELAY_SECONDS)
                 logger.info(
                     "email_resolver: '%s' @ %s -> email=%s verified=%s "
                     "source=%s linkedin=%s phone=%s",

@@ -6,8 +6,10 @@ key UUIDs or 8-char prefixes -- never the full key_value.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import random
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 from uuid import UUID
@@ -33,6 +35,18 @@ logger = get_logger(__name__)
 
 _SERVICE: str = "gemini_tier_manager"
 _DEFAULT_MAX_COOLDOWN_SEC: int = 4 * 60 * 60
+
+# Sentinel UUID + model name for the private last-resort key. The UUID
+# never matches a real validated_keys row, so DB writes keyed on it
+# (mark_quota_exceeded, mark_success, etc) are silent no-ops -- which
+# is what we want, because the backup key isn't quota-tracked in DB,
+# it's throttled per-process via _PRIVATE_KEY_MIN_INTERVAL.
+_PRIVATE_KEY_SENTINEL_UUID = UUID("00000000-0000-0000-0000-000000000001")
+_PRIVATE_KEY_DEFAULT_MODEL = "gemini-2.5-flash"
+# Cap private-key usage: max 1 call every 2 seconds per process.
+# Rate-limit Gemini Tier 1 free is plenty for that. Keeps the pool
+# returning to harvested keys whenever they recover.
+_PRIVATE_KEY_MIN_INTERVAL = 2.0
 _OPPORTUNISTIC_PROBE_INTERVAL = timedelta(hours=1)
 _PROBE_TIMEOUT_SECONDS: float = 30.0
 _PROBE_BODY = {
@@ -60,8 +74,51 @@ def _now_utc() -> datetime:
 class KeyPoolManager:
     """Hands out validated Gemini keys for the currently active tier."""
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self,
+        pool: asyncpg.Pool,
+        private_api_key: str = "",
+    ) -> None:
         self._pool = pool
+        # Tier 1 personal Gemini key, reserved for "harvested pool empty
+        # at every tier" fallback. Empty string disables the fallback.
+        self._private_api_key = (private_api_key or "").strip()
+        self._private_last_used_monotonic: float = 0.0
+        self._private_lock = asyncio.Lock()
+        if self._private_api_key:
+            logger.info(
+                "KeyPoolManager: private backup key configured "
+                "(%s)", _key_prefix(self._private_api_key),
+            )
+
+    async def _try_private_fallback(
+        self, reason: str,
+    ) -> Optional[tuple[UUID, str, str]]:
+        """Hand out the private key when the harvested pool can't.
+
+        Throttled to one call per ``_PRIVATE_KEY_MIN_INTERVAL`` seconds
+        across the whole process so we don't burn the user's personal
+        quota during a sustained harvested-pool outage. Returns None
+        when no private key is configured.
+        """
+        if not self._private_api_key:
+            return None
+        async with self._private_lock:
+            now = time.monotonic()
+            wait = self._private_last_used_monotonic + _PRIVATE_KEY_MIN_INTERVAL - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._private_last_used_monotonic = time.monotonic()
+        logger.warning(
+            "private_key_fallback: reason=%s prefix=%s model=%s",
+            reason, _key_prefix(self._private_api_key),
+            _PRIVATE_KEY_DEFAULT_MODEL,
+        )
+        return (
+            _PRIVATE_KEY_SENTINEL_UUID,
+            self._private_api_key,
+            _PRIVATE_KEY_DEFAULT_MODEL,
+        )
 
     async def get_key_for_active_tier(self) -> Optional[tuple[UUID, str, str]]:
         """Return (validated_key_id, key_value, model_name) or None on circuit open."""
@@ -92,7 +149,8 @@ class KeyPoolManager:
                         # Probe flipped active_tier up; re-read state next iter.
                         continue
                 logger.info("circuit open until %s", circuit_open_until.isoformat())
-                return None
+                fallback = await self._try_private_fallback("circuit_open")
+                return fallback
             picked = await self._descend_until_key(active)
             if picked is not None:
                 key_id, key_value, model_name = picked
@@ -120,11 +178,14 @@ class KeyPoolManager:
                     "no key available now, but cooldowns expire within "
                     "10min -- skipping circuit-open, letting caller wait",
                 )
-                return None
+                fallback = await self._try_private_fallback("imminent_cooldown")
+                return fallback
 
             await self._open_circuit()
-            return None
-        return None
+            fallback = await self._try_private_fallback("all_tiers_exhausted")
+            return fallback
+        fallback = await self._try_private_fallback("descent_exhausted")
+        return fallback
 
     async def _has_imminent_cooldown_expiry(self, window_seconds: int) -> bool:
         """Return True if any valid key has a cooldown ending within `window_seconds`.
@@ -154,6 +215,9 @@ class KeyPoolManager:
 
     async def mark_success(self, key_id: UUID, model_name: str, latency_ms: int) -> None:
         """Reset consecutive_failures on a successful Gemini call."""
+        if key_id == _PRIVATE_KEY_SENTINEL_UUID:
+            # Private key isn't quota-tracked in DB; success is fine.
+            return
         await reset_consecutive_failures(self._pool, key_id)
         # latency_ms accepted for API parity; rolling-stat tracking is deferred.
         _ = latency_ms
@@ -176,6 +240,14 @@ class KeyPoolManager:
         NOT increment ``consecutive_failures`` (that circuit-breaker is
         reserved for genuine errors).
         """
+        if key_id == _PRIVATE_KEY_SENTINEL_UUID:
+            # Private key throttle is per-process; if Tier 1 truly 429s,
+            # the per-call interval already paces us. No DB cooldown.
+            logger.warning(
+                "private_key 429 -- next call gated by %.1fs interval",
+                _PRIVATE_KEY_MIN_INTERVAL,
+            )
+            return
         cooldown = retry_after_seconds if retry_after_seconds and retry_after_seconds > 0 else 65.0
         # Cap at 24h as a safety bound: even if Gemini reports a daily-window
         # retry, we keep the value bounded so a misparsed huge number can't
@@ -189,11 +261,20 @@ class KeyPoolManager:
 
     async def mark_invalid(self, key_id: UUID, reason: str) -> None:
         """Mark a key as globally invalid (Gemini reported API_KEY_INVALID)."""
+        if key_id == _PRIVATE_KEY_SENTINEL_UUID:
+            logger.error("private_key reported INVALID: %s", reason)
+            return
         await mark_validated_key_status(self._pool, key_id, "invalid")
         logger.warning("mark_invalid: key_id=%s reason=%s", key_id, reason)
 
     async def mark_model_denied(self, key_id: UUID, model_name: str) -> None:
         """Per-(key, model) PERMISSION_DENIED -- permanent capability off."""
+        if key_id == _PRIVATE_KEY_SENTINEL_UUID:
+            logger.warning(
+                "private_key denied for model=%s -- not blocking pool",
+                model_name,
+            )
+            return
         await update_validated_capability(
             self._pool, key_id, model_name, is_accessible=False
         )
@@ -201,6 +282,8 @@ class KeyPoolManager:
 
     async def mark_model_unavailable(self, key_id: UUID, model_name: str) -> None:
         """Per-(key, model) MODEL_UNAVAILABLE -- treat as denied capability."""
+        if key_id == _PRIVATE_KEY_SENTINEL_UUID:
+            return
         await update_validated_capability(
             self._pool, key_id, model_name, is_accessible=False
         )
