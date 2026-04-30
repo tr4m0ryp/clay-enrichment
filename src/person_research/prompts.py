@@ -17,7 +17,7 @@ from src.prompts.base_context import build_system_prompt
 
 RESEARCH_PERSON_STRUCTURED = build_system_prompt("""\
 ## Task
-Research one specific contact using grounded Google Search and return a typed JSON brief that downstream campaign-scoring and email-generation steps can consume directly.
+Research one specific contact and return a typed JSON brief that downstream campaign-scoring and email-generation steps can consume directly. You do NOT have web search access for this call -- recall from your training data what you specifically know about this person at this company. When you don't have specific knowledge, return empty fields and research_quality="low" -- do NOT fabricate plausible-sounding facts to fill space.
 
 ## Inputs (each is a templated placeholder filled by the caller)
 - {contact_name}: contact's full name (string, e.g. "Jane Smith")
@@ -43,15 +43,16 @@ Return ONLY a valid JSON object matching this schema. No markdown fences. No pro
   - "medium": some useful facts but gaps remain; identity confirmed.
   - "low": very few results clearly about this person; rely on title + company alone.
   Use "low" if research_text is empty.
-- sources: 0-10 absolute https URLs from the grounded search citations supporting research_text. Empty list [] if no reliable citation. Do NOT fabricate URLs. Do NOT include LinkedIn login walls or shortened redirect URLs when the resolved URL is available.
+- sources: empty list [] is the EXPECTED output for this call -- you do not have search access, so you cannot produce real citation URLs. Do NOT fabricate URLs. NEVER list LinkedIn slug URLs, conference URLs, or news-article URLs you "remember" -- those are reconstructed and almost always 404. The sources field exists for a future grounded variant of this call; for now, leave it [].
 
 ## Process -- follow exactly
-1. Search the web for {contact_name} + {company_name} to confirm identity.
-2. Search again with {contact_name} + {contact_title} + {domain}.
-3. Search for recent activity ({contact_name} 2025, 2026, "talk", "panel", "interview").
-4. Cross-check each fact against the company name and title before including it.
-5. Compose research_text from the verified facts; populate key_topics from recurring themes; pick research_quality honestly; list the citation URLs you actually used in sources.
-6. If a category is empty after searches, state that briefly inside research_text instead of skipping it silently or padding with speculation.
+1. Verify from training data that you specifically recall this person at this company. If unsure, set research_text="" and research_quality="low".
+2. Compose research_text from the FACTS YOU KNOW about this person + this company combination -- e.g. "Bert van Son founded MUD Jeans in 2012 and pioneered the lease-a-jean circular model" is acceptable if widely-reported in your training. "Bert van Son spoke at the 2026 Copenhagen Fashion Summit" is NOT acceptable unless you have specific recall of that event.
+3. Pick research_quality honestly:
+   - "high" only when you have multiple specific, verifiable facts about THIS person at THIS company
+   - "medium" when you have role + general industry knowledge but limited person-specific facts
+   - "low" when you can only restate the role + company already given in the input
+4. If a section has no findings, state that explicitly inside research_text in one sentence ("No public-profile information specifically about this person at this company found in training data").
 
 ## Hard Rules (model MUST obey regardless of capability)
 - Output is JSON ONLY. No prose before or after. No markdown fences.
