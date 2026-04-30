@@ -163,24 +163,31 @@ class PatternLookup:
 
     async def find_email(
         self, domain: str, first: str, last: str,
-    ) -> tuple[str, int]:
-        """Hunter Email Finder lookup -- returns (email, confidence_score).
+    ) -> tuple[str, int, str]:
+        """Hunter Email Finder lookup -- returns (email, score, linkedin_url).
 
         Better accuracy than pattern construction because Hunter returns
         the actual address its crawler has indexed (or, when not indexed,
         Hunter's own best-guess construction with a calibrated score).
+        Hunter's response also exposes a verified ``linkedin`` field
+        whenever its crawler associated a LinkedIn slug with the contact
+        -- captured here so the resolver can populate
+        ``contacts.linkedin_url`` from a real, indexable source instead
+        of leaving it empty (the prompt-only path produced dead links).
 
         Costs 1 Hunter credit per call -- intended for high-priority
         leads only (called from the email_resolver worker after scoring).
-        Returns ("", 0) when:
+        Returns ("", 0, "") when:
           - api_key is unset
           - first or domain is empty
           - Hunter returns nothing or non-200
           - the returned confidence score is below EMAIL_FINDER_MIN_SCORE
-            (caller should fall back to deterministic construction)
+            (caller should fall back to deterministic construction;
+            linkedin_url is still returned in this case if Hunter
+            supplied one, since it is independent of email confidence)
         """
         if not self._api_key or not domain or not first:
-            return "", 0
+            return "", 0, ""
         params = {
             "domain": domain,
             "first_name": first,
@@ -199,30 +206,60 @@ class PatternLookup:
                             "Hunter Email Finder rate-limited for %s %s @ %s",
                             first, last, domain,
                         )
-                        return "", 0
+                        return "", 0, ""
                     if resp.status != 200:
                         logger.warning(
                             "Hunter Email Finder %s for %s %s @ %s: %s",
                             resp.status, first, last, domain,
                             str(body)[:200],
                         )
-                        return "", 0
+                        return "", 0, ""
                     data = (body or {}).get("data") or {}
                     email = (data.get("email") or "").strip()
                     score = int(data.get("score") or 0)
+                    linkedin_url = _normalize_linkedin(data.get("linkedin"))
                     logger.info(
-                        "Hunter Email Finder: %s %s @ %s -> %s (score=%d)",
-                        first, last, domain, email or "(none)", score,
+                        "Hunter Email Finder: %s %s @ %s -> %s "
+                        "(score=%d, linkedin=%s)",
+                        first, last, domain, email or "(none)",
+                        score, linkedin_url or "(none)",
                     )
                     if email and score >= EMAIL_FINDER_MIN_SCORE:
-                        return email, score
-                    return "", score
+                        return email, score, linkedin_url
+                    return "", score, linkedin_url
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             logger.warning(
                 "Hunter Email Finder HTTP error for %s @ %s: %s",
                 first, domain, exc,
             )
-            return "", 0
+            return "", 0, ""
+
+
+def _normalize_linkedin(value: object) -> str:
+    """Coerce Hunter's ``linkedin`` field into a canonical absolute URL.
+
+    Hunter returns one of three shapes for that field:
+      - a full URL  ``https://www.linkedin.com/in/<slug>``
+      - a bare slug ``<slug>``         (we prepend the canonical prefix)
+      - ``None`` / empty string        (return ``""``)
+
+    Anything that doesn't look LinkedIn-shaped after normalization is
+    rejected so a stray bad value can't pollute the dashboard's
+    clickable link.
+    """
+    if not isinstance(value, str):
+        return ""
+    s = value.strip()
+    if not s:
+        return ""
+    if s.startswith("http://") or s.startswith("https://"):
+        if "linkedin.com" not in s.lower():
+            return ""
+        return s
+    # bare slug -- accept letters/digits/-/./_ as LinkedIn allows
+    if any(ch in s for ch in (" ", "/", "?", "#")):
+        return ""
+    return f"https://www.linkedin.com/in/{s}"
 
 
 def construct_email(

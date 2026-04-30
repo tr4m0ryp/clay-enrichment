@@ -49,6 +49,13 @@ async def _fetch_resolvable_pairs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     Joins for efficiency: one query gives us the whole context the
     worker needs per row, plus filters out anything already resolved.
     """
+    # Match on missing email only -- the LinkedIn URL is captured as a
+    # side-effect of the Hunter Email Finder call so a single credit
+    # resolves both. Adding `OR linkedin_url IS NULL` would cause
+    # contacts where Hunter genuinely has no LinkedIn slug to be
+    # re-fetched every cycle, burning credits indefinitely. Existing
+    # already-resolved leads are backfilled by a one-shot script
+    # (scripts/backfill_linkedin.py) instead.
     sql = """
         SELECT
             cc.id           AS junction_id,
@@ -79,12 +86,15 @@ async def _resolve_one(
     pattern_lookup: PatternLookup,
     smtp_verifier: Any,
     dbs: DBClients,
-) -> tuple[str, bool, str]:
-    """Resolve one (contact, campaign) pair. Returns (email, verified, source).
+) -> tuple[str, bool, str, str]:
+    """Resolve one (contact, campaign) pair.
 
-    ``email`` is the address to persist (may be ``""`` when nothing
-    valid was produced). ``verified`` reflects the verifier's verdict.
-    ``source`` is one of ``"pattern"``, ``"published"``, ``"none"``.
+    Returns ``(email, verified, source, linkedin_url)``. ``email`` is
+    the address to persist (may be ``""`` when nothing valid was
+    produced). ``verified`` reflects the verifier's verdict. ``source``
+    is one of ``"pattern"``, ``"finder(score=N)"``, ``"none"``.
+    ``linkedin_url`` is the LinkedIn slug URL Hunter associated with
+    this contact (empty string when Hunter had none or wasn't called).
     """
     contact_name = row["contact_name"] or ""
     company_name = row["company_name"] or ""
@@ -92,21 +102,25 @@ async def _resolve_one(
     domain = extract_domain(website)
 
     if not contact_name or not domain:
-        return "", False, "none"
+        return "", False, "none", ""
 
     first, last = split_name(contact_name)
 
     # 1. Hunter Email Finder -- returns the actual indexed address (or
-    # Hunter's high-confidence construction). Costs 1 credit but is far
-    # more accurate than blindly applying a pattern. Threshold guards
-    # against low-confidence Hunter guesses.
-    found_email, find_score = await pattern_lookup.find_email(
+    # Hunter's high-confidence construction) plus the verified LinkedIn
+    # URL Hunter associated with this contact (when known). Costs 1
+    # credit but is far more accurate than blindly applying a pattern.
+    # Threshold guards against low-confidence Hunter guesses.
+    found_email, find_score, linkedin_url = await pattern_lookup.find_email(
         domain, first, last,
     )
     if found_email:
         verified = await _verify(found_email, smtp_verifier)
         if verified:
-            return found_email, True, f"finder(score={find_score})"
+            return (
+                found_email, True, f"finder(score={find_score})",
+                linkedin_url,
+            )
         # Hunter's address looked confident but didn't actually accept.
         # Surprisingly common -- Hunter's "score" is calibrated against
         # public-source recall, not real-time SMTP. Continue to pattern
@@ -131,14 +145,14 @@ async def _resolve_one(
             )
 
     if not pattern:
-        return "", False, "none"
+        return "", False, "none", linkedin_url
 
     candidate = construct_email(pattern, first, last, domain)
     if not candidate:
-        return "", False, "none"
+        return "", False, "none", linkedin_url
 
     verified = await _verify(candidate, smtp_verifier)
-    return candidate, verified, "pattern"
+    return candidate, verified, "pattern", linkedin_url
 
 
 async def _verify(email: str, smtp_verifier: Any) -> bool:
@@ -155,30 +169,49 @@ async def _persist_resolution(
     row: asyncpg.Record,
     email: str,
     verified: bool,
+    linkedin_url: str,
     dbs: DBClients,
 ) -> None:
-    """Update both contacts and contact_campaigns with the resolved email."""
+    """Update contacts + contact_campaigns with email and LinkedIn URL.
+
+    ``linkedin_url`` is written through to BOTH tables so the leads_full
+    view (which joins on cc.linkedin_url) shows real, working profile
+    links instead of empty cells. An empty string leaves the existing
+    column untouched -- we never blank a value the model previously
+    populated through some other path.
+    """
     contact_id = str(row["contact_id"])
     junction_id = str(row["junction_id"])
 
-    if email:
+    if email or linkedin_url:
+        contact_fields: dict[str, Any] = {}
+        if email:
+            contact_fields["email"] = email
+            contact_fields["email_verified"] = verified
+        if linkedin_url:
+            contact_fields["linkedin_url"] = linkedin_url
         try:
-            await dbs.contacts.update_contact(
-                contact_id, email=email, email_verified=verified,
-            )
+            await dbs.contacts.update_contact(contact_id, **contact_fields)
         except Exception:
             logger.exception(
                 "email_resolver: failed to update contact %s", contact_id,
             )
 
-    sql = """
-        UPDATE contact_campaigns
-        SET email = $1, email_verified = $2, updated_at = now()
-        WHERE id = $3::uuid
-    """
+    # Build the junction UPDATE dynamically so an empty linkedin_url
+    # doesn't overwrite a populated one.
+    set_clauses = ["email = $1", "email_verified = $2", "updated_at = now()"]
+    params: list[Any] = [email, bool(verified)]
+    if linkedin_url:
+        set_clauses.append(f"linkedin_url = ${len(params) + 1}")
+        params.append(linkedin_url)
+    params.append(junction_id)
+    sql = (
+        f"UPDATE contact_campaigns SET {', '.join(set_clauses)} "
+        f"WHERE id = ${len(params)}::uuid"
+    )
     try:
         async with dbs.pool.acquire() as conn:
-            await conn.execute(sql, email, bool(verified), junction_id)
+            await conn.execute(sql, *params)
     except Exception:
         logger.exception(
             "email_resolver: failed to update junction %s", junction_id,
@@ -199,18 +232,21 @@ async def email_resolver_worker(
     async def _bounded(row: asyncpg.Record) -> None:
         async with sem:
             try:
-                email, verified, source = await _resolve_one(
+                email, verified, source, linkedin_url = await _resolve_one(
                     row, pattern_lookup, smtp_verifier, db_clients,
                 )
-                await _persist_resolution(row, email, verified, db_clients)
+                await _persist_resolution(
+                    row, email, verified, linkedin_url, db_clients,
+                )
                 logger.info(
                     "email_resolver: '%s' @ %s -> email=%s verified=%s "
-                    "source=%s",
+                    "source=%s linkedin=%s",
                     row["contact_name"],
                     row["company_name"] or "?",
                     email or "(none)",
                     verified,
                     source,
+                    linkedin_url or "(none)",
                 )
             except Exception:
                 logger.exception(
