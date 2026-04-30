@@ -17,6 +17,8 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
+import asyncpg
+
 from src.db.campaigns import CampaignsDB
 from src.db.companies import CompaniesDB
 from src.discovery.strategies import (
@@ -26,6 +28,7 @@ from src.discovery.strategies import (
     pick_strategy,
 )
 from src.gemini.client import GeminiClient
+from src.utils.backlog import count_high_priority_backlog
 from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,7 @@ class DBClients:
 
     campaigns: CampaignsDB
     companies: CompaniesDB
+    pool: asyncpg.Pool
 
 
 async def discovery_worker(
@@ -56,11 +60,31 @@ async def discovery_worker(
     One strategy per active campaign per cycle. The strategy index is
     advanced regardless of whether new companies were discovered, so the
     rotation always progresses.
+
+    Backpressure: when the high-priority backlog (junction rows scored
+    >=7 on both sides with no email_subject yet) sits above
+    ``config.high_priority_backlog_threshold``, the cycle is skipped so
+    downstream resolver + email-gen + sender stages can drain. Setting
+    the threshold to 0 disables this and reverts to legacy behavior.
     """
-    del config  # accepted for interface symmetry; no longer read here.
-    logger.info("Discovery worker started (13-strategy rotation)")
+    threshold = getattr(config, "high_priority_backlog_threshold", 50)
+    logger.info(
+        "Discovery worker started (13-strategy rotation, "
+        "backlog_threshold=%d)", threshold,
+    )
     while True:
         try:
+            if threshold > 0:
+                backlog = await count_high_priority_backlog(db_clients.pool)
+                if backlog > threshold:
+                    logger.info(
+                        "Discovery: skipping cycle -- high-priority backlog=%d "
+                        "exceeds threshold=%d. Workers downstream need to drain.",
+                        backlog, threshold,
+                    )
+                    await asyncio.sleep(_CYCLE_INTERVAL_SECONDS)
+                    continue
+
             campaigns = await db_clients.campaigns.get_active_campaigns()
             logger.info(
                 "Discovery cycle: found %d active campaigns", len(campaigns),

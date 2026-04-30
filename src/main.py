@@ -180,10 +180,10 @@ async def main() -> None:
 
     # Build per-worker DB client aggregates
     discovery_dbs = DiscoveryDBClients(
-        campaigns=campaigns_db, companies=companies_db
+        campaigns=campaigns_db, companies=companies_db, pool=pool,
     )
     people_dbs = PeopleDBClients(
-        companies=companies_db, contacts=contacts_db
+        companies=companies_db, contacts=contacts_db, pool=pool,
     )
     sender_dbs = SimpleNamespace(
         emails=emails_db,

@@ -13,6 +13,8 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+import asyncpg
+
 from src.config import Config
 from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
@@ -22,6 +24,7 @@ from src.people.pattern_lookup import PatternLookup, construct_email
 from src.people.prompts import DISCOVER_CONTACTS
 from src.people.published_email_finder import find_published_email
 from src.people.smtp_verify import SMTPVerifier
+from src.utils.backlog import count_high_priority_backlog
 from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,7 @@ class DBClients:
 
     companies: CompaniesDB
     contacts: ContactsDB
+    pool: asyncpg.Pool
 
 
 async def people_worker(
@@ -45,11 +49,32 @@ async def people_worker(
     db_clients: DBClients,
     smtp_verifier: SMTPVerifier,
 ) -> None:
-    """Continuous loop over Enriched companies above the DPP threshold."""
-    logger.info("People worker started")
+    """Continuous loop over Enriched companies above the DPP threshold.
+
+    Backpressure: when the high-priority backlog already exceeds
+    ``config.high_priority_backlog_threshold``, contact discovery skips
+    the cycle so downstream stages can catch up before more contacts
+    enter the funnel. Threshold of 0 disables this.
+    """
+    threshold = getattr(config, "high_priority_backlog_threshold", 50)
+    logger.info(
+        "People worker started (backlog_threshold=%d)", threshold,
+    )
     pattern_lookup = PatternLookup(config, db_clients.companies)
     while True:
         try:
+            if threshold > 0:
+                backlog = await count_high_priority_backlog(db_clients.pool)
+                if backlog > threshold:
+                    logger.info(
+                        "People worker: skipping cycle -- high-priority "
+                        "backlog=%d exceeds threshold=%d. Resolver + "
+                        "email_gen need to drain before discovering more "
+                        "contacts.", backlog, threshold,
+                    )
+                    await asyncio.sleep(_CYCLE_INTERVAL)
+                    continue
+
             companies = await db_clients.companies.get_companies_by_status(
                 "Enriched",
             )
