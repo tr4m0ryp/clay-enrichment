@@ -100,12 +100,16 @@ class PatternLookup:
 
     async def _call_hunter(self, domain: str) -> str:
         """Single Hunter Domain Search call. Returns pattern or empty string."""
-        params = {"domain": domain, "api_key": self._api_key}
+        # Auth via Authorization header rather than ?api_key= URL param --
+        # keys in URLs leak to access logs / proxies / browser history.
+        # Hunter has supported Bearer auth for years.
+        params = {"domain": domain}
+        headers = {"Authorization": f"Bearer {self._api_key}"}
         timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(
-                    HUNTER_DOMAIN_SEARCH_URL, params=params
+                    HUNTER_DOMAIN_SEARCH_URL, params=params, headers=headers,
                 ) as resp:
                     body = await self._safe_json(resp)
                     if resp.status == 429:
@@ -192,13 +196,13 @@ class PatternLookup:
             "domain": domain,
             "first_name": first,
             "last_name": last or "",
-            "api_key": self._api_key,
         }
+        headers = {"Authorization": f"Bearer {self._api_key}"}
         timeout = aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(
-                    HUNTER_EMAIL_FINDER_URL, params=params,
+                    HUNTER_EMAIL_FINDER_URL, params=params, headers=headers,
                 ) as resp:
                     body = await self._safe_json(resp) or {}
                     if resp.status == 429:
