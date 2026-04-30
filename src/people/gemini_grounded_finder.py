@@ -38,11 +38,17 @@ _RETRY_COOLDOWN_DAYS = 7
 
 PROMPT = build_system_prompt("""\
 ## Task
-Find the LinkedIn profile URL and most likely work email for a specific
-person at a specific company by searching the open web. You have
-Google Search grounding enabled -- use it to find verified public
+Find BOTH the LinkedIn profile URL AND the most likely work email for
+a specific person at a specific company by searching the open web. You
+have Google Search grounding enabled -- use it to find verified public
 sources: company team pages, conference speaker bios, press releases,
 podcast guests, GitHub commits, blog interviews.
+
+The LinkedIn URL is just as important as the email. A LinkedIn search
+in the form ``"<full name>" "<company name>" site:linkedin.com/in``
+almost always surfaces the profile -- run that query and inspect the
+top results. Do NOT return only an email when a LinkedIn URL is also
+findable.
 
 ## Inputs
 - {contact_name}: full name (string)
@@ -95,9 +101,35 @@ Return ONLY a valid JSON object. No markdown fences, no prose.
 
 
 _LINKEDIN_RE = re.compile(
-    r"^https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/[A-Za-z0-9._\-%]+/?$"
+    r"^https?://(?:[a-zA-Z]{2,5}\.)?linkedin\.com/in/[A-Za-z0-9._\-%]+/?$"
 )
 _VALID_CONFIDENCES = frozenset({"high", "medium", "low", "none"})
+
+
+def _normalize_linkedin_url(raw: str) -> str:
+    """Return a canonical LinkedIn profile URL or empty string on reject.
+
+    Gemini's grounded responses sometimes return URLs with query
+    params (?utm_source=...), trailing whitespace, or capitalized
+    subdomains -- all of which the bare regex would reject. Strip
+    those before validation so a real URL doesn't get dropped.
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    # Drop fragment + query so utm tracking junk doesn't break the regex
+    for sep in ("?", "#"):
+        if sep in s:
+            s = s.split(sep, 1)[0]
+    s = s.rstrip("/")
+    # Reject if the domain isn't linkedin.com/in -- catches cases where
+    # Gemini returned a company page (linkedin.com/company/...) or a
+    # search results URL.
+    if "linkedin.com/in/" not in s.lower():
+        return ""
+    if not _LINKEDIN_RE.match(s + "/"):
+        return ""
+    return s
 
 
 @dataclass
@@ -254,9 +286,9 @@ class GeminiGroundedFinder:
                 # Off-domain match -- reject so we don't persist
                 # vendor / personal emails as "the work email".
                 email = ""
-        linkedin_url = (parsed.get("linkedin_url") or "").strip()
-        if linkedin_url and not _LINKEDIN_RE.match(linkedin_url):
-            linkedin_url = ""
+        linkedin_url = _normalize_linkedin_url(
+            parsed.get("linkedin_url") or "",
+        )
         sources_raw = parsed.get("sources") or []
         sources = [
             s for s in sources_raw
