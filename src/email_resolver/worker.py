@@ -44,9 +44,12 @@ MIN_RESOLVE_SCORE = 7  # mirrors MIN_DPP_FIT_SCORE used elsewhere
 _CYCLE_INTERVAL_SECONDS = 240  # 4 min between cycles (was 3) -- gentler
 # pace prevents bursting through the Prospeo monthly budget when a
 # scoring batch suddenly drops 20+ high-priority leads at once.
-_CONCURRENCY = 2  # was 3 -- two parallel Prospeo calls is well under
-# Prospeo's per-key rate limit AND lets the per-call delay below
-# actually spread credit burn across the cycle window.
+_CONCURRENCY = 1  # serial resolution. The Gemini-grounded fallback
+# is slow (~30-60s per call) and the private Tier-1 backup has a 2s
+# per-call throttle; running two contacts in parallel doubled the
+# throttle wait and stacked into the request timeout. Serial keeps
+# the private key serving one finder request at a time, max one
+# Prospeo call at a time -- predictable cadence.
 _PER_CALL_DELAY_SECONDS = 0.6  # small jitter between consecutive
 # resolutions in the same cycle so a burst of 50 leads stretches
 # across ~30s rather than hammering Prospeo in 2-3s.
