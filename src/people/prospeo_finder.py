@@ -225,6 +225,8 @@ class ProspeoFinder:
                     )
                     return result
                 # Empty result body -- treat as miss without rotating.
+                # Log a 0-credit row so dashboard call-count reflects it.
+                await self._log_usage(state.api_key, 0, domain, False)
                 return None
 
             if status == 401 or error_code == "INVALID_API_KEY":
@@ -247,6 +249,11 @@ class ProspeoFinder:
                     "ProspeoFinder: %s for %s %s @ %s (definitive miss)",
                     error_code, first_name, last_name, domain,
                 )
+                # Log a 0-credit row so the dashboard call-count
+                # reflects every API call we made, not just credit-
+                # spending hits. Prospeo doesn't bill these but they
+                # are real activity worth surfacing.
+                await self._log_usage(state.api_key, 0, domain, False)
                 return None
 
             logger.warning(

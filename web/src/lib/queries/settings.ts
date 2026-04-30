@@ -45,20 +45,23 @@ function getProspeoMonthlyQuota(): number {
 
 export async function getDashboardStats() {
   const c = client();
-  // First-of-month UTC for the range filter. Indexed on used_at, so
-  // the >= comparison hits the b-tree directly. Avoids to_char-based
-  // generated columns (Postgres rejects them as non-IMMUTABLE).
-  const now = new Date();
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  // Rolling 30-day window (instead of calendar month). With 15 Prospeo
+  // accounts each on its own per-account 30-day refresh cycle, no
+  // single calendar-month reset matches reality -- a rolling window
+  // approximates the aggregate behavior closely.
+  const windowStart = new Date(
+    Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const [leadsFound, prospeoUsed, emailsReady, activeCampaigns] =
+  const [leadsFound, prospeoCalls, emailsReady, activeCampaigns] =
     await Promise.all([
       c.from("contacts").select("*", { count: "exact", head: true }),
+      // Pull credits per row so we can derive both the call count
+      // (=row count, includes free NO_MATCH calls) and the credit
+      // total (=sum of credits, the actual budget figure).
       c
         .from("prospeo_usage")
         .select("credits")
-        .gte("used_at", startOfMonth),
+        .gte("used_at", windowStart),
       c
         .from("emails")
         .select("*", { count: "exact", head: true })
@@ -71,18 +74,22 @@ export async function getDashboardStats() {
   for (const r of [leadsFound, emailsReady, activeCampaigns]) {
     if (r.error) throw new Error(r.error.message);
   }
-  if (prospeoUsed.error) {
-    // Don't fail the whole dashboard if the usage table is unavailable
-    // (e.g. schema migration not yet applied) -- just show 0/quota.
-    console.warn("getDashboardStats: prospeo_usage read failed:", prospeoUsed.error.message);
+  if (prospeoCalls.error) {
+    console.warn(
+      "getDashboardStats: prospeo_usage read failed:",
+      prospeoCalls.error.message,
+    );
   }
-  const usedCredits = (prospeoUsed.data ?? []).reduce(
+  const rows = prospeoCalls.data ?? [];
+  const callsCount = rows.length;
+  const creditsUsed = rows.reduce(
     (sum: number, row: { credits: number }) => sum + (row.credits ?? 0),
     0,
   );
   return {
     leadsFound: leadsFound.count ?? 0,
-    prospeoUsed: usedCredits,
+    prospeoCalls: callsCount,
+    prospeoCredits: creditsUsed,
     prospeoTotal: getProspeoMonthlyQuota(),
     emailsReady: emailsReady.count ?? 0,
     activeCampaigns: activeCampaigns.count ?? 0,
