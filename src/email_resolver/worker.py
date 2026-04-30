@@ -1,15 +1,21 @@
 """Email resolver worker -- runs only on high-priority leads.
 
 Polls contact_campaigns where relevance_score >= MIN_RESOLVE_SCORE and
-the contact has no email yet, resolves the email (Hunter pattern +
-construct + MyEmailVerifier), persists back to contacts.email +
-contact_campaigns.email + email_verified flag.
+the contact has no email yet, resolves the email + LinkedIn URL +
+(optionally) phone, persists back to contacts and contact_campaigns
+plus the email_verified flag.
 
-Deferred to scoring time so we don't spend Hunter quota / verification
-credits on contacts that ultimately score too low to email. Per the
-2026-04-30 architectural change, the people worker no longer constructs
-or verifies emails -- that's the resolver's job, gated by the score
-threshold.
+Provider waterfall (try in order, take whichever returns first):
+  1. Prospeo enrich-person -- multi-key pool, 1 credit per email+
+     LinkedIn lookup, 10 credits if mobile is requested. Primary.
+  2. Hunter Email Finder + Domain Search pattern construction --
+     fallback, 1 credit per finder call. Existing wiring kept so we
+     can ride through Prospeo quota exhaustion.
+  3. Pattern construction from Hunter Domain Search -- deterministic
+     last-resort with no extra credits per contact (one per company).
+
+Deferred to scoring time so we don't spend any provider quota on
+contacts that ultimately score too low to email.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from src.db.companies import CompaniesDB
 from src.db.contacts import ContactsDB
 from src.people.helpers import extract_domain, split_name
 from src.people.pattern_lookup import PatternLookup, construct_email
+from src.people.prospeo_finder import ProspeoFinder, ProspeoResult
 
 logger = logging.getLogger(__name__)
 
@@ -81,78 +88,133 @@ async def _fetch_resolvable_pairs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
         return await conn.fetch(sql, MIN_RESOLVE_SCORE)
 
 
+@dataclass
+class ResolverResult:
+    """Outcome of one resolve cycle for a contact -- carries every
+    field the persistence step writes to ``contacts`` and
+    ``contact_campaigns``. Empty strings/False are the "no data" sentinels.
+    """
+
+    email: str = ""
+    email_verified: bool = False
+    linkedin_url: str = ""
+    phone: str = ""
+    source: str = "none"
+
+
 async def _resolve_one(
     row: asyncpg.Record,
+    prospeo_finder: ProspeoFinder | None,
     pattern_lookup: PatternLookup,
     smtp_verifier: Any,
     dbs: DBClients,
-) -> tuple[str, bool, str, str]:
-    """Resolve one (contact, campaign) pair.
+    *,
+    enrich_mobile: bool,
+) -> ResolverResult:
+    """Resolve one (contact, campaign) pair through the provider waterfall.
 
-    Returns ``(email, verified, source, linkedin_url)``. ``email`` is
-    the address to persist (may be ``""`` when nothing valid was
-    produced). ``verified`` reflects the verifier's verdict. ``source``
-    is one of ``"pattern"``, ``"finder(score=N)"``, ``"none"``.
-    ``linkedin_url`` is the LinkedIn slug URL Hunter associated with
-    this contact (empty string when Hunter had none or wasn't called).
+    1. Prospeo enrich-person (primary) -- email + LinkedIn URL natively;
+       phone too if ``enrich_mobile`` is True (10x credit cost).
+    2. Hunter Email Finder (fallback) -- email + LinkedIn from the
+       ``linkedin`` field on Hunter's response.
+    3. Hunter pattern construction (last resort) -- only an email,
+       constructed deterministically from the cached company pattern.
+
+    Each step preserves whatever the previous step already populated:
+    if Prospeo returned a LinkedIn URL but no usable email, Hunter is
+    consulted for the email while keeping the Prospeo LinkedIn intact.
     """
     contact_name = row["contact_name"] or ""
-    company_name = row["company_name"] or ""
     website = row["company_website"] or ""
     domain = extract_domain(website)
 
     if not contact_name or not domain:
-        return "", False, "none", ""
+        return ResolverResult()
 
     first, last = split_name(contact_name)
+    result = ResolverResult()
 
-    # 1. Hunter Email Finder -- returns the actual indexed address (or
-    # Hunter's high-confidence construction) plus the verified LinkedIn
-    # URL Hunter associated with this contact (when known). Costs 1
-    # credit but is far more accurate than blindly applying a pattern.
-    # Threshold guards against low-confidence Hunter guesses.
-    found_email, find_score, linkedin_url = await pattern_lookup.find_email(
+    # 1. Prospeo (primary). Provides email + LinkedIn URL + phone in
+    # one call. Populates the result; we keep going only if email is
+    # missing so Hunter / pattern can fill that gap.
+    if prospeo_finder is not None and prospeo_finder.enabled:
+        prospeo_hit: ProspeoResult | None = await prospeo_finder.find(
+            first, last, domain, enrich_mobile=enrich_mobile,
+        )
+        if prospeo_hit is not None:
+            if prospeo_hit.linkedin_url:
+                result.linkedin_url = prospeo_hit.linkedin_url
+            if prospeo_hit.phone:
+                result.phone = prospeo_hit.phone
+            if prospeo_hit.email:
+                # Prospeo flags VERIFIED when its own MX-level checks
+                # pass. We still run MyEmailVerifier downstream in case
+                # the address has gone stale since Prospeo crawled it.
+                if prospeo_hit.email_verified:
+                    result.email = prospeo_hit.email
+                    result.email_verified = True
+                    result.source = "prospeo"
+                else:
+                    verified = await _verify(prospeo_hit.email, smtp_verifier)
+                    if verified:
+                        result.email = prospeo_hit.email
+                        result.email_verified = True
+                        result.source = "prospeo+verifier"
+                    else:
+                        logger.info(
+                            "email_resolver: Prospeo email %s did not verify;"
+                            " falling through to Hunter",
+                            prospeo_hit.email,
+                        )
+
+    if result.email:
+        return result
+
+    # 2. Hunter Email Finder. Carry through whatever LinkedIn/phone
+    # Prospeo already gave us so the fallback can't blank a populated
+    # field.
+    found_email, find_score, hunter_linkedin = await pattern_lookup.find_email(
         domain, first, last,
     )
+    if hunter_linkedin and not result.linkedin_url:
+        result.linkedin_url = hunter_linkedin
     if found_email:
         verified = await _verify(found_email, smtp_verifier)
         if verified:
-            return (
-                found_email, True, f"finder(score={find_score})",
-                linkedin_url,
-            )
-        # Hunter's address looked confident but didn't actually accept.
-        # Surprisingly common -- Hunter's "score" is calibrated against
-        # public-source recall, not real-time SMTP. Continue to pattern
-        # construction as fallback so we don't drop the contact entirely.
+            result.email = found_email
+            result.email_verified = True
+            result.source = f"hunter(score={find_score})"
+            return result
         logger.info(
             "email_resolver: Hunter Finder address %s did not verify; "
             "falling back to pattern", found_email,
         )
 
-    # 2. Pattern lookup (cached per company; one Hunter credit max per
-    # company, regardless of how many contacts it has).
+    # 3. Pattern construction (deterministic; one Hunter Domain Search
+    # credit per company, cached, regardless of how many contacts share it).
     pattern = (row["email_pattern"] or "").strip()
     pattern_source = (row["email_pattern_source"] or "").strip()
     if not pattern and pattern_source != "none":
         company_id = str(row["company_id"]) if row["company_id"] else ""
         if company_id:
             pattern, src = await pattern_lookup.get_pattern(company_id, domain)
-            pattern_source = src
             logger.info(
                 "email_resolver: pattern for %s -> %r (source=%s)",
                 domain, pattern, src,
             )
 
     if not pattern:
-        return "", False, "none", linkedin_url
+        return result
 
     candidate = construct_email(pattern, first, last, domain)
     if not candidate:
-        return "", False, "none", linkedin_url
+        return result
 
     verified = await _verify(candidate, smtp_verifier)
-    return candidate, verified, "pattern", linkedin_url
+    result.email = candidate
+    result.email_verified = verified
+    result.source = "pattern"
+    return result
 
 
 async def _verify(email: str, smtp_verifier: Any) -> bool:
@@ -167,29 +229,32 @@ async def _verify(email: str, smtp_verifier: Any) -> bool:
 
 async def _persist_resolution(
     row: asyncpg.Record,
-    email: str,
-    verified: bool,
-    linkedin_url: str,
+    result: ResolverResult,
     dbs: DBClients,
 ) -> None:
-    """Update contacts + contact_campaigns with email and LinkedIn URL.
+    """Update contacts + contact_campaigns with the resolved fields.
 
-    ``linkedin_url`` is written through to BOTH tables so the leads_full
-    view (which joins on cc.linkedin_url) shows real, working profile
-    links instead of empty cells. An empty string leaves the existing
-    column untouched -- we never blank a value the model previously
-    populated through some other path.
+    Each non-empty field is written to BOTH tables so the leads_full
+    view (which reads ``cc.linkedin_url`` / ``cc.phone``) stays in
+    sync with the canonical contacts table. Empty strings never
+    overwrite a populated column -- a field that was already set by
+    a previous resolver pass survives even if this pass missed.
     """
     contact_id = str(row["contact_id"])
     junction_id = str(row["junction_id"])
 
-    if email or linkedin_url:
+    has_any = bool(
+        result.email or result.linkedin_url or result.phone,
+    )
+    if has_any:
         contact_fields: dict[str, Any] = {}
-        if email:
-            contact_fields["email"] = email
-            contact_fields["email_verified"] = verified
-        if linkedin_url:
-            contact_fields["linkedin_url"] = linkedin_url
+        if result.email:
+            contact_fields["email"] = result.email
+            contact_fields["email_verified"] = result.email_verified
+        if result.linkedin_url:
+            contact_fields["linkedin_url"] = result.linkedin_url
+        if result.phone:
+            contact_fields["phone"] = result.phone
         try:
             await dbs.contacts.update_contact(contact_id, **contact_fields)
         except Exception:
@@ -197,13 +262,19 @@ async def _persist_resolution(
                 "email_resolver: failed to update contact %s", contact_id,
             )
 
-    # Build the junction UPDATE dynamically so an empty linkedin_url
-    # doesn't overwrite a populated one.
+    # Build the junction UPDATE dynamically so empty values don't blank
+    # populated columns. ``email`` + ``email_verified`` are always
+    # written because the email lookup is the trigger for this row
+    # leaving the resolvable-pairs query (callers expect the email
+    # column to reflect the latest attempt, even on miss).
     set_clauses = ["email = $1", "email_verified = $2", "updated_at = now()"]
-    params: list[Any] = [email, bool(verified)]
-    if linkedin_url:
+    params: list[Any] = [result.email, bool(result.email_verified)]
+    if result.linkedin_url:
         set_clauses.append(f"linkedin_url = ${len(params) + 1}")
-        params.append(linkedin_url)
+        params.append(result.linkedin_url)
+    if result.phone:
+        set_clauses.append(f"phone = ${len(params) + 1}")
+        params.append(result.phone)
     params.append(junction_id)
     sql = (
         f"UPDATE contact_campaigns SET {', '.join(set_clauses)} "
@@ -223,30 +294,43 @@ async def email_resolver_worker(
     db_clients: DBClients,
     pattern_lookup: PatternLookup,
     smtp_verifier: Any,
+    prospeo_finder: ProspeoFinder | None = None,
 ) -> None:
-    """Continuous worker -- resolve email for high-priority leads only."""
-    del config  # accepted for signature parity with main.py registrations
-    logger.info("Email resolver worker started (min_score=%d)", MIN_RESOLVE_SCORE)
+    """Continuous worker -- resolve email for high-priority leads only.
+
+    ``prospeo_finder`` is optional so existing deployments that don't
+    set ``PROSPEO_API_KEYS`` continue working with Hunter as the only
+    provider; when configured, Prospeo is the primary and Hunter the
+    fallback.
+    """
+    enrich_mobile = bool(getattr(config, "prospeo_enrich_mobile", False))
+    logger.info(
+        "Email resolver worker started (min_score=%d prospeo=%s "
+        "enrich_mobile=%s)",
+        MIN_RESOLVE_SCORE,
+        "enabled" if (prospeo_finder and prospeo_finder.enabled) else "disabled",
+        enrich_mobile,
+    )
     sem = asyncio.Semaphore(_CONCURRENCY)
 
     async def _bounded(row: asyncpg.Record) -> None:
         async with sem:
             try:
-                email, verified, source, linkedin_url = await _resolve_one(
-                    row, pattern_lookup, smtp_verifier, db_clients,
+                result = await _resolve_one(
+                    row, prospeo_finder, pattern_lookup, smtp_verifier,
+                    db_clients, enrich_mobile=enrich_mobile,
                 )
-                await _persist_resolution(
-                    row, email, verified, linkedin_url, db_clients,
-                )
+                await _persist_resolution(row, result, db_clients)
                 logger.info(
                     "email_resolver: '%s' @ %s -> email=%s verified=%s "
-                    "source=%s linkedin=%s",
+                    "source=%s linkedin=%s phone=%s",
                     row["contact_name"],
                     row["company_name"] or "?",
-                    email or "(none)",
-                    verified,
-                    source,
-                    linkedin_url or "(none)",
+                    result.email or "(none)",
+                    result.email_verified,
+                    result.source,
+                    result.linkedin_url or "(none)",
+                    result.phone or "(none)",
                 )
             except Exception:
                 logger.exception(

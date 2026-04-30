@@ -145,7 +145,8 @@ class ContactsDB:
         """
         allowed = {
             "name", "job_title", "email", "email_verified",
-            "linkedin_url", "company_id", "status", "context", "body",
+            "linkedin_url", "phone", "company_id", "status",
+            "context", "body",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:

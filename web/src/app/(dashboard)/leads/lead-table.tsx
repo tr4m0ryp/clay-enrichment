@@ -14,6 +14,7 @@ export interface LeadRow {
   email: string | null;
   email_verified: boolean;
   linkedin_url: string | null;
+  phone: string | null;
   company_fit_score: number | null;
   relevance_score: number | null;
   email_subject: string | null;
@@ -118,6 +119,18 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
             className="text-primary hover:underline underline-offset-4"
           >
             Profile
+          </a>
+        ) : (
+          <span className="text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell className="font-mono text-xs">
+        {lead.phone ? (
+          <a
+            href={`tel:${lead.phone}`}
+            className="text-primary hover:underline underline-offset-4"
+          >
+            {lead.phone}
           </a>
         ) : (
           <span className="text-muted-foreground">--</span>

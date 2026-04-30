@@ -37,6 +37,16 @@ class Config:
     hunter_api_key: str = ""
     myemailverifier_api_key: str = ""
 
+    # Prospeo (primary person enrichment -- email + linkedin + phone).
+    # Comma-separated list of API keys: each free account grants ~75-100
+    # enrichments per month, so the resolver pool can scale linearly with
+    # the number of keys configured (10 keys ~ 1000 enrichments/month).
+    # Phone enrichment costs 10x credits and is gated behind
+    # PROSPEO_ENRICH_MOBILE so cheap email+LinkedIn lookups stay the
+    # default at ~1000/month, opt-in mobile pulls ~100/month per pool.
+    prospeo_api_keys: list = field(default_factory=list)
+    prospeo_enrich_mobile: bool = False
+
     # Email
     smtp_host: str = ""
     smtp_port: int = 587
@@ -82,6 +92,14 @@ def _load_config() -> Config:
         brave_search_api_key=os.environ.get("BRAVE_SEARCH_API_KEY", "").strip(),
         hunter_api_key=os.environ.get("HUNTER_API_KEY", "").strip(),
         myemailverifier_api_key=os.environ.get("MYEMAILVERIFIER_API_KEY", "").strip(),
+        prospeo_api_keys=[
+            k.strip()
+            for k in os.environ.get("PROSPEO_API_KEYS", "").split(",")
+            if k.strip()
+        ],
+        prospeo_enrich_mobile=os.environ.get(
+            "PROSPEO_ENRICH_MOBILE", "false",
+        ).strip().lower() == "true",
         smtp_host=os.environ.get("SMTP_HOST", "").strip(),
         smtp_port=int(os.environ.get("SMTP_PORT", "587")),
         senders=_discover_senders(),
