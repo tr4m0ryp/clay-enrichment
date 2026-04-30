@@ -1,5 +1,21 @@
 # Clay Enrichment -- Project Instructions
 
+## CRITICAL: Iteration loop hard rules
+
+**Rule 1 -- Never block on long-running commands.**
+Pipeline runs, full re-deploys, multi-minute tests must NOT be invoked with a foreground long timeout. That wastes the budget.
+- Launch as a background process (`run_in_background: true`, `nohup ... &`, systemd, or equivalent), capture PID and log path.
+- Poll periodically (every 30-60s) by tailing the log or checking process status.
+- Block briefly on the poll, not on the run.
+- While waiting, work in parallel: review prior outputs, code review, fixes.
+
+**Rule 2 -- Never send actual emails without explicit approval.**
+Email sending is the ONLY pipeline stage that must NOT be exercised end-to-end during development / iteration loops.
+- Stub, mock, or dry-run the send step so messages are generated and logged but not delivered.
+- Verify the generation, templating, personalization, and queueing logic; just don't hit the real SMTP send.
+- Every other stage (gathering, LinkedIn matching, company enrichment, personal enrichment, context collection, scoring, etc.) should be fully exercised against real systems.
+- Hard kill switch: `EMAIL_SEND_DISABLED=true` in the runtime env makes the email_sender worker skip dispatch even if SMTP creds are present.
+
 ## CRITICAL: Server-First Workflow
 
 This project runs on the GCP server, NOT locally. Local development should only be used for code changes. After every change:

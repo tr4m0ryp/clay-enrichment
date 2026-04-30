@@ -102,13 +102,11 @@ async def _process_company(
 
     logger.info("People worker: processing '%s' (domain=%s)", name, domain)
 
-    # Step 1: ensure email pattern is cached on the companies row.
-    pattern, src = await pattern_lookup.get_pattern(company_id, domain)
-    logger.info(
-        "People worker: pattern for %s -> %r (source=%s)", domain, pattern, src,
-    )
-
-    # Step 2: one Gemini grounded structured call -> contact list.
+    # Step 1: discover names + titles + LinkedIn via one Gemini call. Email
+    # resolution is DEFERRED -- we don't burn Hunter / verifier credits on
+    # contacts that may score low. The email_resolver worker picks up
+    # contact_campaigns rows with score >= MIN_DPP_FIT_SCORE and resolves
+    # only those.
     raw_contacts = await _discover_contacts(gemini_client, name, domain)
     if not raw_contacts:
         logger.info("People worker: no contacts found for '%s'", name)
@@ -125,7 +123,6 @@ async def _process_company(
     }
 
     created = 0
-    verified = 0
     for raw in raw_contacts:
         contact_name = (raw.get("name") or "").strip()
         if not contact_name:
@@ -139,29 +136,28 @@ async def _process_company(
             continue
         seen.add(key)
         try:
-            persisted, was_verified = await _resolve_and_persist_contact(
-                raw,
+            row = await dbs.contacts.create_contact(
+                name=contact_name,
                 company_id=company_id,
                 campaign_id=campaign_id,
-                company_name=name,
-                domain=domain,
-                pattern=pattern,
-                gemini_client=gemini_client,
-                contacts_db=dbs.contacts,
-                smtp_verifier=smtp_verifier,
+                job_title=(raw.get("title") or "").strip(),
+                email_addr="",  # resolved later by email_resolver worker
+                email_verified=False,
+                linkedin_url=(raw.get("linkedin_url") or "").strip(),
             )
-            created += int(persisted)
-            verified += int(was_verified)
+            if row is not None:
+                created += 1
+                logger.info(
+                    "People worker: created '%s' (email deferred)",
+                    contact_name,
+                )
         except Exception:
             logger.exception(
                 "People worker: error on contact '%s' at '%s'",
                 contact_name, name,
             )
 
-    logger.info(
-        "People worker: '%s' -> %d created, %d verified",
-        name, created, verified,
-    )
+    logger.info("People worker: '%s' -> %d contacts created", name, created)
     await dbs.companies.update_company(
         company_id, {"status": "Contacts Found"},
     )
