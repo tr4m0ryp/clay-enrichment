@@ -28,19 +28,14 @@ export async function getSenderAccounts() {
   >(data, error);
 }
 
-// Total Prospeo monthly quota is derived: (configured key count) ×
-// (per-key allowance). The key count is parsed from the same
-// PROSPEO_API_KEYS env var the pipeline reads, so adding/removing
-// keys auto-updates the dashboard total without a code change.
-// Per-key allowance defaults to 100 (Prospeo free tier) and can be
-// overridden via PROSPEO_QUOTA_PER_KEY.
+// Total Prospeo monthly quota. Read from PROSPEO_MONTHLY_QUOTA env
+// (set in web/.env.local on the server) so the cap is a single
+// authoritative number rather than reconstructed from a key list
+// the web process can't always see. Falls back to 1500 (the current
+// 15-key × 100-credit pool size) if the env var is unset.
 function getProspeoMonthlyQuota(): number {
-  const perKey = Number(process.env.PROSPEO_QUOTA_PER_KEY ?? 100);
-  const raw = (process.env.PROSPEO_API_KEYS ?? "").trim();
-  const keyCount = raw === ""
-    ? 0
-    : raw.split(",").map((s) => s.trim()).filter(Boolean).length;
-  return Math.max(0, keyCount * perKey);
+  const raw = Number(process.env.PROSPEO_MONTHLY_QUOTA ?? 1500);
+  return Number.isFinite(raw) && raw > 0 ? raw : 1500;
 }
 
 export async function getDashboardStats() {
