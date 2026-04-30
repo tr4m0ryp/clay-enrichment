@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/table";
 import { DataTable } from "@/components/ui/data-table";
 import { LeadRow, LeadTableRow } from "@/app/(dashboard)/leads/lead-table";
+import { CsvExportButton } from "@/app/(dashboard)/leads/csv-export-button";
 
 export default async function CampaignLeadsPage({
   params,
@@ -18,14 +19,19 @@ export default async function CampaignLeadsPage({
 
   return (
     <div>
-      <h1 className="text-lg font-semibold text-foreground">
-        High-Priority Leads
-      </h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Contacts with a Fit or Relevance score of 7+.
-      </p>
+      <div className="mb-6 flex items-end justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-foreground">
+            High-Priority Leads
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Contacts with a Fit or Relevance score of 7+.
+          </p>
+        </div>
+        <CsvExportButton leads={leads} />
+      </div>
 
-      <div className="mt-6">
+      <div>
         <DataTable
           count={leads.length}
           empty="No high-priority leads found for this campaign."
