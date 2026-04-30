@@ -47,7 +47,7 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
           <Link
             prefetch
             href={`/companies/${lead.company_id}?from=leads`}
-            className="text-primary hover:underline underline-offset-4"
+            className="text-foreground hover:text-primary hover:underline underline-offset-4"
           >
             {lead.company_name}
           </Link>
@@ -74,7 +74,7 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
           <Link
             prefetch
             href={`/contacts/${lead.contact_id}?from=leads`}
-            className="text-primary hover:underline underline-offset-4"
+            className="text-foreground hover:text-primary hover:underline underline-offset-4"
           >
             {lead.name}
           </Link>
