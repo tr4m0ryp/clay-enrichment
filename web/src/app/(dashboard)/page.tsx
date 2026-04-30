@@ -74,7 +74,7 @@ export default async function DashboardPage() {
           title="Prospeo Quota"
           used={stats.prospeoUsed}
           total={stats.prospeoTotal}
-          description="Credits spent this month"
+          description="Credits this month - resets on the 1st"
         />
         <StatsCard
           title="Emails Ready"
