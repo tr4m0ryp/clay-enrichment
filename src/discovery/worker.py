@@ -30,7 +30,10 @@ from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
 
-_CYCLE_INTERVAL_SECONDS = 300  # 5 min between full cycles
+_CYCLE_INTERVAL_SECONDS = 600  # 10 min between cycles -- halved
+# discovery influx so high-priority leads don't pile up faster than
+# Prospeo can resolve them (15-key pool sustains ~50/day at 1
+# credit per call).
 _EXCLUDE_CAP = 150  # most-recent N already-known names per campaign
 _TOP_SEEDS_N = 3  # top-DPP-score companies for the adjacency strategy
 

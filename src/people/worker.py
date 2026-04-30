@@ -27,7 +27,8 @@ from src.utils.json_retry import retry_on_malformed_json
 logger = logging.getLogger(__name__)
 
 MIN_DPP_FIT_SCORE = 7
-_CYCLE_INTERVAL = 180  # seconds between worker cycles
+_CYCLE_INTERVAL = 300  # 5 min -- bumped from 3 min so the contact-
+# discovery pace matches the slowed enrichment+discovery cadence.
 
 
 @dataclass

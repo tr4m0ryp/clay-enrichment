@@ -12,6 +12,7 @@ truncate prompts to 200 characters in any log line.
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from time import monotonic
 from typing import Optional
@@ -53,11 +54,21 @@ _default_client: Optional[httpx.AsyncClient] = None
 
 
 async def _get_default_manager() -> KeyPoolManager:
-    """Return a process-scoped ``KeyPoolManager`` over the Supabase pool."""
+    """Return a process-scoped ``KeyPoolManager`` over the Supabase pool.
+
+    The optional ``PRIVATE_GEMINI_API_KEY`` env var (read once at first
+    construction) is wired in as a last-resort backup -- the manager
+    only surfaces it when every harvested key is exhausted across all
+    tiers. Empty / unset means no fallback.
+    """
     global _default_manager
     if _default_manager is None:
         pool = await get_supabase_pool()
-        _default_manager = KeyPoolManager(pool=pool)
+        private_key = os.environ.get("PRIVATE_GEMINI_API_KEY", "").strip()
+        _default_manager = KeyPoolManager(
+            pool=pool,
+            private_api_key=private_key,
+        )
     return _default_manager
 
 

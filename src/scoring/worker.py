@@ -23,7 +23,9 @@ from src.utils.json_retry import retry_on_malformed_json
 
 logger = logging.getLogger(__name__)
 MIN_DPP_FIT_SCORE = 7
-_CYCLE_INTERVAL = 240
+_CYCLE_INTERVAL = 360  # 6 min -- last upstream stage before the
+# email_resolver. Bumped from 4 min so the queue of high-priority
+# leads grows at a pace Prospeo's 1-credit-per-call rate can absorb.
 _CONCURRENCY = 5  # max contact-campaign pairs scored in parallel
 _EMPTY_COMPANY: dict = {
     "company_name": "", "industry": "Other",

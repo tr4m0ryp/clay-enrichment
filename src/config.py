@@ -47,6 +47,13 @@ class Config:
     prospeo_api_keys: list = field(default_factory=list)
     prospeo_enrich_mobile: bool = False
 
+    # Private Tier 1 Gemini API key -- LAST-RESORT backup. Used only when
+    # every harvested key in the validated pool is exhausted at every
+    # tier; harvested keys are retried on every cycle so the system
+    # returns to them as soon as quotas reset. Kept out of the regular
+    # pool to protect the user's personal quota.
+    private_gemini_api_key: str = ""
+
     # Email
     smtp_host: str = ""
     smtp_port: int = 587
@@ -100,6 +107,9 @@ def _load_config() -> Config:
         prospeo_enrich_mobile=os.environ.get(
             "PROSPEO_ENRICH_MOBILE", "false",
         ).strip().lower() == "true",
+        private_gemini_api_key=os.environ.get(
+            "PRIVATE_GEMINI_API_KEY", "",
+        ).strip(),
         smtp_host=os.environ.get("SMTP_HOST", "").strip(),
         smtp_port=int(os.environ.get("SMTP_PORT", "587")),
         senders=_discover_senders(),
