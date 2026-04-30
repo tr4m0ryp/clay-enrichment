@@ -43,6 +43,19 @@ export function ContactDetail({
       ),
     },
     {
+      label: "Phone",
+      value: contact.phone ? (
+        <a
+          href={`tel:${contact.phone as string}`}
+          className="text-primary hover:underline"
+        >
+          {contact.phone as string}
+        </a>
+      ) : (
+        "--"
+      ),
+    },
+    {
       label: "Company",
       value: companyHref ? (
         <Link
