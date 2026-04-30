@@ -46,7 +46,7 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
         {lead.company_id && lead.company_name ? (
           <Link
             prefetch
-            href={`/companies/${lead.company_id}?from=leads`}
+            href={`/campaigns/${lead.campaign_id}/companies/${lead.company_id}?from=leads`}
             className="text-foreground hover:text-primary hover:underline underline-offset-4"
           >
             {lead.company_name}
@@ -73,7 +73,7 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
         {lead.contact_id ? (
           <Link
             prefetch
-            href={`/contacts/${lead.contact_id}?from=leads`}
+            href={`/campaigns/${lead.campaign_id}/contacts/${lead.contact_id}?from=leads`}
             className="text-foreground hover:text-primary hover:underline underline-offset-4"
           >
             {lead.name}
