@@ -202,7 +202,44 @@ def construct_email(
 
 
 def _normalize_name(part: str) -> str:
-    """Lowercase, strip whitespace, drop non-ASCII letters."""
+    """Lowercase + transliterate accented chars + keep ASCII letters only.
+
+    Uses NFKD decomposition to strip combining marks so common
+    international characters are mapped to their ASCII counterparts:
+    "á" -> "a", "ñ" -> "n", "Ø" -> "o". Hyphens, periods, apostrophes,
+    and other punctuation are dropped -- email local-parts conventionally
+    don't include them.
+
+    Examples:
+        "Álvarez-Ossorio" -> "alvarezossorio"
+        "Iñigo"           -> "inigo"
+        "Møller"          -> "moller"
+        "O'Brien"         -> "obrien"
+    """
+    import unicodedata
+    if not part:
+        return ""
+    # Pre-translate characters that NFKD doesn't decompose (precomposed
+    # codepoints with no combining-mark equivalent: Nordic ø/æ/å, German
+    # ß, Polish ł, Icelandic þ/ð, etc.).
+    pretranslate = {
+        "ø": "o", "Ø": "o",   # ø, Ø
+        "æ": "ae", "Æ": "ae", # æ, Æ
+        "å": "a", "Å": "a",   # å, Å
+        "ß": "ss",                 # ß
+        "ł": "l", "Ł": "l",   # ł, Ł
+        "ð": "d", "Ð": "d",   # ð, Ð
+        "þ": "th", "Þ": "th", # þ, Þ
+    }
+    pre = "".join(pretranslate.get(ch, ch) for ch in part)
+    folded = pre.casefold().strip()
+    decomposed = unicodedata.normalize("NFKD", folded)
+    ascii_only = decomposed.encode("ascii", errors="ignore").decode("ascii")
+    return "".join(ch for ch in ascii_only if "a" <= ch <= "z")
+
+
+def _legacy_normalize_name_unused(part: str) -> str:
+    """(deprecated -- replaced by _normalize_name above)."""
     if not part:
         return ""
     out = []

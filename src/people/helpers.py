@@ -41,13 +41,27 @@ def extract_domain(website_url: str) -> str:
 
 
 def split_name(full_name: str) -> tuple[str, str]:
-    """Split a full name into first and last name.
+    """Split a full name into first and last name for email construction.
+
+    For multi-word names, returns the FIRST word and the LAST word --
+    middle names, initials, and particles ("de", "van", "von", "L.")
+    are dropped. Most email-pattern systems (Hunter, Apollo, etc.)
+    follow the same convention; matching them keeps constructed
+    addresses aligned with how mailbox local-parts are actually
+    provisioned.
+
+    Examples:
+        "Anne Marie L. Nielsen"     -> ("Anne", "Nielsen")
+        "Carolina Álvarez-Ossorio"  -> ("Carolina", "Álvarez-Ossorio")
+        "Iñigo de la Fuente"        -> ("Iñigo", "Fuente")
+        "Mats Rombaut"              -> ("Mats", "Rombaut")
+        "Madonna"                   -> ("Madonna", "")
 
     Args:
         full_name: Full name string.
 
     Returns:
-        Tuple of (first_name, last_name). Last name may be empty for
+        Tuple of (first_name, last_name). Last name is empty for
         single-word names.
     """
     parts = full_name.strip().split()
@@ -55,4 +69,4 @@ def split_name(full_name: str) -> tuple[str, str]:
         return ("", "")
     if len(parts) == 1:
         return (parts[0], "")
-    return (parts[0], " ".join(parts[1:]))
+    return (parts[0], parts[-1])
