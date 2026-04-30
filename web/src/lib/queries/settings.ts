@@ -28,13 +28,20 @@ export async function getSenderAccounts() {
   >(data, error);
 }
 
-// Total Prospeo monthly quota = (key count) * (per-key allowance).
-// Set via env so 100/key/month can be tweaked without a redeploy
-// when Prospeo's tier changes. Falls back to 1500 (15 keys * 100)
-// which matches the current pool size.
-const PROSPEO_MONTHLY_QUOTA = Number(
-  process.env.PROSPEO_MONTHLY_QUOTA ?? 1500,
-);
+// Total Prospeo monthly quota is derived: (configured key count) ×
+// (per-key allowance). The key count is parsed from the same
+// PROSPEO_API_KEYS env var the pipeline reads, so adding/removing
+// keys auto-updates the dashboard total without a code change.
+// Per-key allowance defaults to 100 (Prospeo free tier) and can be
+// overridden via PROSPEO_QUOTA_PER_KEY.
+function getProspeoMonthlyQuota(): number {
+  const perKey = Number(process.env.PROSPEO_QUOTA_PER_KEY ?? 100);
+  const raw = (process.env.PROSPEO_API_KEYS ?? "").trim();
+  const keyCount = raw === ""
+    ? 0
+    : raw.split(",").map((s) => s.trim()).filter(Boolean).length;
+  return Math.max(0, keyCount * perKey);
+}
 
 export async function getDashboardStats() {
   const c = client();
@@ -76,7 +83,7 @@ export async function getDashboardStats() {
   return {
     leadsFound: leadsFound.count ?? 0,
     prospeoUsed: usedCredits,
-    prospeoTotal: PROSPEO_MONTHLY_QUOTA,
+    prospeoTotal: getProspeoMonthlyQuota(),
     emailsReady: emailsReady.count ?? 0,
     activeCampaigns: activeCampaigns.count ?? 0,
   };
