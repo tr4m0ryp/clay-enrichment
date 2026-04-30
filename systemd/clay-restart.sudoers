@@ -1,0 +1,6 @@
+# Allow the `clay` user (which runs clay-web) to restart the pipeline
+# from the Settings UI so prompt overrides take effect without a manual
+# SSH session. Strictly scoped to clay-pipeline -- no other commands.
+#
+# Installed to /etc/sudoers.d/clay-restart by deploy.sh.
+clay ALL=(root) NOPASSWD: /usr/bin/systemctl restart clay-pipeline, /usr/bin/systemctl is-active clay-pipeline

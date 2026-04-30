@@ -10,19 +10,19 @@ set -euo pipefail
 REPO_DIR=${REPO_DIR:-/opt/clay-enrichment}
 cd "$REPO_DIR"
 
-echo "[1/5] git pull ..."
+echo "[1/6] git pull ..."
 git pull --ff-only
 
-echo "[2/5] pip install -r requirements.txt ..."
+echo "[2/6] pip install -r requirements.txt ..."
 ./.venv/bin/pip install -r requirements.txt
 
-echo "[3/5] npm install + next build ..."
+echo "[3/6] npm install + next build ..."
 cd web
 npm install
 npm run build
 cd "$REPO_DIR"
 
-echo "[4/5] installing/refreshing systemd units ..."
+echo "[4/6] installing/refreshing systemd units ..."
 sudo cp -u systemd/clay-key-scrape.service \
            systemd/clay-key-scrape.timer \
            systemd/clay-key-validate.service \
@@ -39,7 +39,11 @@ sudo systemctl enable --now \
     clay-key-revalidate.timer \
     clay-key-recovery.timer
 
-echo "[5/5] restarting clay-web ..."
+echo "[5/6] installing pipeline-restart sudoers rule ..."
+sudo install -m 0440 -o root -g root \
+    systemd/clay-restart.sudoers /etc/sudoers.d/clay-restart
+
+echo "[6/6] restarting clay-web ..."
 sudo systemctl restart clay-web
 
 echo "done."

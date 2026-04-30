@@ -4,6 +4,7 @@ import { getSettings, getSenderAccounts } from "@/lib/queries";
 import { PROMPTS } from "@/lib/prompts/registry";
 import { loadPromptDefault } from "@/lib/prompts/loader";
 import { PromptsForm, type PromptItem } from "./prompts-form";
+import { RestartPipelineButton } from "./restart-pipeline-button";
 import { SenderEmailsForm } from "./sender-emails-form";
 import {
   Card,
@@ -47,7 +48,10 @@ export default async function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <h1 className="text-lg font-semibold">Settings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold">Settings</h1>
+        <RestartPipelineButton />
+      </div>
 
       <Card>
         <CardHeader>
