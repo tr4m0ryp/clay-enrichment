@@ -7,7 +7,7 @@ from src.prompts.base_context import build_system_prompt
 
 DISCOVER_CONTACTS = build_system_prompt("""\
 ## Task
-Search the open web for current decision-makers at {company_name} ({domain}) who would be relevant for a B2B outreach campaign about {campaign_target}. Return up to 10 named contacts with title and LinkedIn URL.
+Recall from your training data the named decision-makers (founders, C-level, Head-of-X) currently at {company_name} ({domain}) who would be relevant for a B2B outreach campaign about {campaign_target}. Return up to 6 contacts with full names + standardized titles. NO LinkedIn URLs (you cannot reliably know them; we set them later via verified sources).
 
 ## Inputs
 - {company_name}: target company display name (string, e.g. "Patagonia")
@@ -19,54 +19,55 @@ Return ONLY a valid JSON array matching this schema. No markdown fences. No pros
 
 [
   {
-    "name": "string -- full name as published, max 120 chars",
+    "name": "string -- FIRST and LAST name only, both full words, max 80 chars",
     "title": "string -- short standardized title, max 5 words",
-    "linkedin_url": "string -- https://www.linkedin.com/in/... or empty string"
+    "linkedin_url": "string -- ALWAYS empty string \\"\\""
   }
 ]
 
 ### Field-by-field rules
-- name: full name as published on the source. Title casing as written. NEVER include role qualifiers like "Former" or "Interim" in the name itself. Use empty string "" if no full name is found (drop the entry instead of returning a bare initial).
-- title: standardized short job title. Maximum 5 words. Examples: "CEO", "Head of Sustainability", "VP Supply Chain", "Creative Director".
+- name: a real, verifiable person you actually know works at {company_name}. MUST contain a full first name AND a full last name (both as ASCII words, no single-letter middle initials inside, no abbreviations). NEVER fabricate plausible-sounding names. NEVER fill in with generic placeholder names ("John Doe", "Jane Smith", or made-up Western/Nordic/Romance combinations the model invents). If you can recall fewer than 2 verifiable people, return [].
+  - REJECT names with embedded initials: "Anne M. Nielsen" -> drop OR resolve to the full middle name. "Beatriz M. S." -> drop entirely.
+  - REJECT name patterns where multiple contacts at the same company share an unusual surname (e.g. "David Gellis", "Sarah Gellis", "Michael Gellis" all at one ~50-person brand) -- this is a hallucination signature.
+  - REJECT made-up Danish/Dutch/Spanish surnames you have no specific training-data memory of. If unsure, return [].
+- title: standardized short job title. Maximum 5 words. Examples: "CEO", "Head of Sustainability", "VP Supply Chain", "Creative Director", "Founder".
   - Use standard abbreviations: CEO, CTO, CFO, COO, CMO, CRO, VP, SVP, EVP, MD.
   - Strip company names: "CEO of Nike" becomes "CEO".
   - Strip locations: "VP Sales, EMEA" becomes "VP Sales".
-  - Strip parenthetical info: "CFO (interim)" becomes "CFO".
-  - Strip commentary: no "(unverified)", "(formerly)", "(deceased)", dates, or qualifiers.
-  - English only: translate foreign titles. "Responsabile vendite" becomes "Sales Manager".
-  - Current role only: "Former CEO" or "Seeking new opportunities" is NOT a valid title -- use "".
-  - LinkedIn headlines that are slogans, company names, or inspirational text are NOT titles -- use "".
-  - Use empty string "" if no clear current role is determinable. NEVER write "Unknown", "N/A", "No data found", or any sentinel string.
-- linkedin_url: full LinkedIn profile URL starting with "https://www.linkedin.com/in/". Use empty string "" if no profile is found. NEVER fabricate a slug.
+  - Strip parenthetical info, dates, commentary.
+  - English only: translate foreign titles.
+  - Current role only: "Former CEO" -> drop or use "".
+  - Use empty string "" if no clear current role is determinable. NEVER write "Unknown", "N/A", or any sentinel string.
+- linkedin_url: ALWAYS the empty string "". The model cannot reliably know LinkedIn slug URLs; constructing them produces dead-redirect links. The downstream resolver fills this in from verified sources only.
 
 ## Process -- follow exactly
-1. Search Google for senior people at {company_name} ({domain}) using role keywords aligned with {campaign_target}. Prioritize: founder, CEO, COO, CMO, CRO, Head of Sustainability, Head of Product, Head of Operations, Head of Supply Chain, Head of Digital, Head of E-commerce, VP, Director.
-2. Inspect company website team pages, About / Leadership pages, press releases, conference speaker pages, and LinkedIn search results.
-3. Verify each person is currently employed at {company_name} (not "Former CEO", not pending). Drop anyone whose current role is at a different company.
-4. Standardize titles per the rules above. Drop the title (use "") when no clear current role is determinable.
-5. Deduplicate by name. If the same person appears multiple times, keep one entry with the best title and LinkedIn URL.
-6. Return up to 10 contacts. Return [] if no qualified contacts are found.
+1. Recall the actual founder / CEO / COO / Head of Sustainability / Head of Product etc. at {company_name} ({domain}) from your training data.
+2. If your training data has SPECIFIC named individuals at this company, list them. If your training data does not (you would be inventing names), return [] -- do not fabricate.
+3. Standardize each title.
+4. Deduplicate by name.
+5. Return up to 6 contacts. Quality over quantity. Return [] when no verifiable individuals are recallable for this specific company.
 
 ## Hard Rules (model MUST obey regardless of capability)
 - Output is JSON ONLY. No prose before or after. No markdown fences.
-- NEVER fabricate a person who is not mentioned on a public source.
-- NEVER include people who clearly work at a different company that shares a word with the target (e.g. "Four Kitchens" vs "Four").
+- NEVER fabricate a person whose name + role at this company you cannot specifically recall.
+- NEVER fill in plausible-sounding placeholder names because the company is small and you don't know its team. Return [] instead.
+- NEVER include LinkedIn URL slugs -- field MUST always be the empty string.
 - Empty values: "" for strings. NEVER use sentinel strings like "Unknown" or "N/A".
-- Never use emojis.
-- Never include keys not in the schema. Never omit keys in the schema.
-- Never include comments inside the JSON.
+- Never use emojis. Never include keys not in the schema. Never omit keys in the schema. Never include comments inside the JSON.
 
 ## Output Examples
-### Good output
-[{"name": "Jane Smith", "title": "Head of Sustainability", "linkedin_url": "https://www.linkedin.com/in/janesmith"}, {"name": "John Doe", "title": "CEO", "linkedin_url": ""}]
+### Good output (specific names known)
+[{"name": "Bert van Son", "title": "Founder", "linkedin_url": ""}, {"name": "Dion Vijgeboom", "title": "CEO", "linkedin_url": ""}]
 
-### Good output (no contacts found)
+### Good output (no specific names known -- DO this instead of inventing)
 []
 
 ### Bad outputs (do NOT do these)
-- "Here is the JSON: [...]"                                                                  (prose before)
-- "```json\\n[...]\\n```"                                                                      (markdown fence)
-- [{"name": "Jane Smith", "title": "Unknown", "linkedin_url": ""}]                            (sentinel string instead of "")
-- [{"name": "Jane Smith", "title": "Former CEO", "linkedin_url": ""}]                         (former role instead of "")
-- [{"name": "Jane Smith", "title": "Head of Sustainability"}]                                 (missing required key)
+- [{"name": "Anne M. Nielsen", "title": "CEO", "linkedin_url": ""}]                          (initial-style middle)
+- [{"name": "Beatriz M. S.", "title": "Head of Marketing", "linkedin_url": ""}]              (initials-only suffix)
+- [{"name": "John Doe", ...}, {"name": "Jane Smith", ...}]                                   (placeholder names)
+- [{"name": "David Gellis", ...}, {"name": "Sarah Gellis", ...}, {"name": "Michael Gellis", ...}] (fabricated dynasty at small brand)
+- [{"name": "Mette Møller", "title": "CEO", "linkedin_url": "https://www.linkedin.com/in/mette-moller-12345"}] (fabricated LinkedIn slug)
+- "Here is the JSON: [...]"                                                                   (prose before)
+- "```json\\n[...]\\n```"                                                                       (markdown fence)
 """)
