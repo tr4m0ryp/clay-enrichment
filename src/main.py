@@ -45,7 +45,6 @@ from src.email_resolver.worker import (
     DBClients as ResolverDBClients,
 )
 from src.people.gemini_grounded_finder import GeminiGroundedFinder
-from src.people.pattern_lookup import PatternLookup
 from src.people.prospeo_finder import ProspeoFinder
 
 logger: logging.Logger | None = None
@@ -194,7 +193,6 @@ async def main() -> None:
     resolver_dbs = ResolverDBClients(
         companies=companies_db, contacts=contacts_db, pool=pool,
     )
-    pattern_lookup = PatternLookup(config, companies_db)
     prospeo_finder = ProspeoFinder(
         getattr(config, "prospeo_api_keys", []) or [],
         usage_pool=pool,
@@ -221,7 +219,7 @@ async def main() -> None:
          [config, gemini, contacts_db, companies_db, campaigns_db,
           contact_campaigns_db]),
         ("email_resolver", email_resolver_worker,
-         [config, resolver_dbs, pattern_lookup, smtp_verifier,
+         [config, resolver_dbs, smtp_verifier,
           prospeo_finder, gemini_finder]),
         ("email_gen", email_gen_worker,
          [config, gemini, campaigns_db, companies_db, contacts_db,

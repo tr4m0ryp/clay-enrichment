@@ -5,14 +5,16 @@ the contact has no email yet, resolves the email + LinkedIn URL +
 (optionally) phone, persists back to contacts and contact_campaigns
 plus the email_verified flag.
 
-Provider waterfall (try in order, take whichever returns first):
+Provider waterfall (only two layers now -- Hunter + pattern were
+removed because their hit rate on niche EU brands was effectively zero
+and they polluted the persisted email column with low-quality guesses):
   1. Prospeo enrich-person -- multi-key pool, 1 credit per email+
      LinkedIn lookup, 10 credits if mobile is requested. Primary.
-  2. Hunter Email Finder + Domain Search pattern construction --
-     fallback, 1 credit per finder call. Existing wiring kept so we
-     can ride through Prospeo quota exhaustion.
-  3. Pattern construction from Hunter Domain Search -- deterministic
-     last-resort with no extra credits per contact (one per company).
+  2. Gemini grounded fallback -- runs only on Prospeo NO_MATCH.
+     Single grounded Google Search call mines team pages, conference
+     bios, etc. for LinkedIn URL + likely email. Email goes through
+     MyEmailVerifier downstream so we never persist Gemini's guess
+     without proof.
 
 Deferred to scoring time so we don't spend any provider quota on
 contacts that ultimately score too low to email.
@@ -34,7 +36,6 @@ from src.people.gemini_grounded_finder import (
     GeminiGroundedFinder, GeminiFinderResult,
 )
 from src.people.helpers import extract_domain, split_name
-from src.people.pattern_lookup import PatternLookup, construct_email
 from src.people.prospeo_finder import ProspeoFinder, ProspeoResult
 
 logger = logging.getLogger(__name__)
@@ -88,9 +89,7 @@ async def _fetch_resolvable_pairs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
             c.name          AS contact_name,
             c.job_title,
             co.name         AS company_name,
-            co.website      AS company_website,
-            co.email_pattern,
-            co.email_pattern_source
+            co.website      AS company_website
         FROM contact_campaigns cc
         JOIN contacts c   ON cc.contact_id = c.id
         LEFT JOIN companies co ON cc.company_id = co.id
@@ -126,7 +125,6 @@ async def _resolve_one(
     row: asyncpg.Record,
     prospeo_finder: ProspeoFinder | None,
     gemini_finder: GeminiGroundedFinder | None,
-    pattern_lookup: PatternLookup,
     smtp_verifier: Any,
     dbs: DBClients,
     *,
@@ -136,19 +134,14 @@ async def _resolve_one(
 
     1. Prospeo enrich-person (primary) -- email + LinkedIn URL natively;
        phone too if ``enrich_mobile`` is True (10x credit cost).
-    2. Gemini grounded fallback (NEW) -- runs only on Prospeo NO_MATCH.
+    2. Gemini grounded fallback -- runs only on Prospeo NO_MATCH.
        Single grounded Google Search call mines team pages, conference
        bios, etc. for LinkedIn URL + likely email. Email goes through
        MyEmailVerifier downstream so we never persist Gemini's guess
        without proof.
-    3. Hunter Email Finder -- email + LinkedIn from the ``linkedin``
-       field on Hunter's response.
-    4. Hunter pattern construction (last resort) -- only an email,
-       constructed deterministically from the cached company pattern.
 
-    Each step preserves whatever the previous step already populated:
-    if Prospeo returned a LinkedIn URL but no usable email, Gemini /
-    Hunter / pattern fill the email while keeping the LinkedIn intact.
+    A partial Prospeo hit (linkedin only, no email) keeps its
+    linkedin_url while the Gemini fallback fills in the missing email.
     """
     contact_name = row["contact_name"] or ""
     website = row["company_website"] or ""
@@ -251,57 +244,10 @@ async def _resolve_one(
                         return result
                     logger.info(
                         "email_resolver: Gemini email %s did not verify; "
-                        "falling through to Hunter+pattern",
+                        "leaving contact unresolved",
                         gemini_hit.email,
                     )
 
-    if result.email:
-        return result
-
-    # 3. Hunter Email Finder. Carry through whatever LinkedIn/phone
-    # earlier providers gave us so the fallback can't blank a populated
-    # field.
-    found_email, find_score, hunter_linkedin = await pattern_lookup.find_email(
-        domain, first, last,
-    )
-    if hunter_linkedin and not result.linkedin_url:
-        result.linkedin_url = hunter_linkedin
-    if found_email:
-        verified = await _verify(found_email, smtp_verifier)
-        if verified:
-            result.email = found_email
-            result.email_verified = True
-            result.source = f"hunter(score={find_score})"
-            return result
-        logger.info(
-            "email_resolver: Hunter Finder address %s did not verify; "
-            "falling back to pattern", found_email,
-        )
-
-    # 3. Pattern construction (deterministic; one Hunter Domain Search
-    # credit per company, cached, regardless of how many contacts share it).
-    pattern = (row["email_pattern"] or "").strip()
-    pattern_source = (row["email_pattern_source"] or "").strip()
-    if not pattern and pattern_source != "none":
-        company_id = str(row["company_id"]) if row["company_id"] else ""
-        if company_id:
-            pattern, src = await pattern_lookup.get_pattern(company_id, domain)
-            logger.info(
-                "email_resolver: pattern for %s -> %r (source=%s)",
-                domain, pattern, src,
-            )
-
-    if not pattern:
-        return result
-
-    candidate = construct_email(pattern, first, last, domain)
-    if not candidate:
-        return result
-
-    verified = await _verify(candidate, smtp_verifier)
-    result.email = candidate
-    result.email_verified = verified
-    result.source = "pattern"
     return result
 
 
@@ -380,7 +326,6 @@ async def _persist_resolution(
 async def email_resolver_worker(
     config: Config,
     db_clients: DBClients,
-    pattern_lookup: PatternLookup,
     smtp_verifier: Any,
     prospeo_finder: ProspeoFinder | None = None,
     gemini_finder: GeminiGroundedFinder | None = None,
@@ -409,8 +354,8 @@ async def email_resolver_worker(
             try:
                 result = await _resolve_one(
                     row, prospeo_finder, gemini_finder,
-                    pattern_lookup, smtp_verifier,
-                    db_clients, enrich_mobile=enrich_mobile,
+                    smtp_verifier, db_clients,
+                    enrich_mobile=enrich_mobile,
                 )
                 await _persist_resolution(row, result, db_clients)
                 # Spread credit burn across the cycle: a small jitter
