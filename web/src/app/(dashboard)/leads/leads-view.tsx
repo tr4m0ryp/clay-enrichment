@@ -54,6 +54,7 @@ export function LeadsView({
             <TableHead>Job Title</TableHead>
             <TableHead>Email</TableHead>
             <TableHead>Verified</TableHead>
+            <TableHead>Prospeo</TableHead>
             <TableHead>LinkedIn</TableHead>
             <TableHead>Phone</TableHead>
             <TableHead className="text-right">Fit</TableHead>
