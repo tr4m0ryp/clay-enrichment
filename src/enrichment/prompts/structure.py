@@ -7,8 +7,9 @@ JSON profile with DPP fit scoring.
 """
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
-STRUCTURE_COMPANY_ENRICHMENT = build_system_prompt("""\
+_DEFAULT_STRUCTURE_COMPANY_ENRICHMENT = """\
 ## Task: Structure Company Research into Enrichment Profile
 
 You are converting a free-text research report into a structured JSON \
@@ -127,4 +128,8 @@ specific evidence from the research report.
 - If research is insufficient for a field, use "Unknown" for strings, \
 false for booleans, and [] for lists. Set dpp_fit_score to 3 with \
 reasoning explaining the data gap.
-""")
+"""
+
+STRUCTURE_COMPANY_ENRICHMENT = build_system_prompt(
+    resolve("enrich_company_structure", _DEFAULT_STRUCTURE_COMPANY_ENRICHMENT)
+)

@@ -87,4 +87,6 @@ def build_system_prompt(task_instructions: str) -> str:
     Returns:
         A single system prompt string with context + instructions.
     """
-    return f"{AVELERO_CONTEXT}\n---\n\n{task_instructions}"
+    from src.prompts.runtime import resolve
+    context = resolve("avelero_identity", AVELERO_CONTEXT)
+    return f"{context}\n---\n\n{task_instructions}"

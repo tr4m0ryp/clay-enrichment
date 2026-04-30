@@ -13,9 +13,10 @@ with ``retry_on_malformed_json`` and the tolerant JSON extractor.
 from __future__ import annotations
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
 
-RESEARCH_PERSON_STRUCTURED = build_system_prompt("""\
+_DEFAULT_RESEARCH_PERSON_STRUCTURED = """\
 ## Task
 Research one specific contact and return a typed JSON brief that downstream campaign-scoring and email-generation steps can consume directly. You do NOT have web search access for this call -- recall from your training data what you specifically know about this person at this company. When you don't have specific knowledge, return empty fields and research_quality="low" -- do NOT fabricate plausible-sounding facts to fill space.
 
@@ -77,4 +78,8 @@ Return ONLY a valid JSON object matching this schema. No markdown fences. No pro
 - {"research_text": "...", "key_topics": [...], "research_quality": "maybe", "sources": [...]}                           (research_quality not in allowed set)
 - {"research_text": "...", "key_topics": [...], "research_quality": "high", "sources": [...], "extra_field": "..."}      (extra key not in schema)
 - {"research_text": "..."}                                                                                                (missing required keys)
-""")
+"""
+
+RESEARCH_PERSON_STRUCTURED = build_system_prompt(
+    resolve("person_research_structured", _DEFAULT_RESEARCH_PERSON_STRUCTURED)
+)

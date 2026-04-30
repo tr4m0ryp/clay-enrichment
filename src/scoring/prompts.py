@@ -21,9 +21,10 @@ identical to keep downstream readers and the SQL schema unchanged.
 from __future__ import annotations
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
 
-STRUCTURE_AND_SCORE_PERSON = build_system_prompt("""\
+_DEFAULT_STRUCTURE_AND_SCORE_PERSON = """\
 ## Task
 Structure raw person research into citable fields and score the contact's \
 fit against the campaign target description. Output a single JSON object \
@@ -192,4 +193,8 @@ JSON array of strings, NOT a comma-separated string.
 - {"relevance_signals": "No relevance signals found", ...}   (sentinel string instead of "")
 - {"determined_role": "...", "extra_field": "..."}           (extra key not in schema)
 - {"determined_role": "..."}                                 (missing required keys)
-""")
+"""
+
+STRUCTURE_AND_SCORE_PERSON = build_system_prompt(
+    resolve("scoring_structure_and_score_person", _DEFAULT_STRUCTURE_AND_SCORE_PERSON)
+)

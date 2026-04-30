@@ -19,9 +19,10 @@ fixed.
 from __future__ import annotations
 
 from src.prompts.base_context import build_system_prompt
+from src.prompts.runtime import resolve
 
 
-GENERATE_BRIEF = build_system_prompt("""\
+_DEFAULT_GENERATE_BRIEF = """\
 ## Task
 Research the cold-email style and ideal customer profile that would \
 resonate for the campaign described below. Output a structured campaign \
@@ -115,10 +116,14 @@ sample_email_body.
 - {"icp_brief": "...", "voice_profile": "...", "extra_thing": "..."}  (extra key)
 - "Here is the campaign brief: {...}"                          (prose before)
 - "```json\\n{...}\\n```"                                       (markdown fence)
-""")
+"""
+
+GENERATE_BRIEF = build_system_prompt(
+    resolve("campaign_brief_generate", _DEFAULT_GENERATE_BRIEF)
+)
 
 
-REGENERATE_SAMPLE = build_system_prompt("""\
+_DEFAULT_REGENERATE_SAMPLE = """\
 ## Task
 Regenerate the sample cold email for this campaign incorporating the \
 user's feedback. Keep the campaign's icp_brief, voice_profile, and \
@@ -217,4 +222,8 @@ sample_email_body.
 - {"banned_phrases": [], ...} when prior had entries           (silently dropped locked list)
 - "Here is the regenerated sample: {...}"                      (prose before)
 - "```json\\n{...}\\n```"                                       (markdown fence)
-""")
+"""
+
+REGENERATE_SAMPLE = build_system_prompt(
+    resolve("campaign_brief_regenerate_sample", _DEFAULT_REGENERATE_SAMPLE)
+)
