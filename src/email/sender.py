@@ -225,10 +225,38 @@ async def send_batch(
 
 
 async def email_sender_worker(config: Config, db_clients: Any) -> None:
-    """Main worker loop: polls for approved emails and sends with rotation."""
+    """Main worker loop: polls for approved emails and sends with rotation.
+
+    Per project CLAUDE.md Rule 2: ``EMAIL_SEND_DISABLED=true`` in the
+    runtime env hard-disables outbound dispatch even when SMTP creds are
+    present. Used during the iteration loop so generation/templating
+    are exercised end-to-end while no real mail is delivered.
+    """
+    import os as _os
     sender_pool = SenderPool(config.senders, config.email_daily_limit)
+    kill_switch = _os.environ.get("EMAIL_SEND_DISABLED", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    if kill_switch:
+        logger.warning(
+            "EMAIL_SEND_DISABLED=true -- email sender will run in dry-run "
+            "mode (poll + log only, no SMTP dispatch). Unset to enable.",
+        )
 
     while True:
+        if kill_switch:
+            try:
+                emails_db: EmailsDB = db_clients.emails
+                approved = await emails_db.get_approved_emails()
+            except Exception:
+                approved = []
+            if approved:
+                logger.info(
+                    "EMAIL_SEND_DISABLED: would dispatch %d approved email(s); "
+                    "skipping all SMTP calls.", len(approved),
+                )
+            await asyncio.sleep(120)
+            continue
         if not config.smtp_host:
             logger.info("Email sending disabled (no SMTP configured)")
             await asyncio.sleep(3600)

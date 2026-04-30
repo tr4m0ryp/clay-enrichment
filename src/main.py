@@ -40,6 +40,11 @@ from src.person_research.worker import person_research_worker
 from src.scoring.worker import campaign_scoring_worker
 from src.email.gen import email_gen_worker
 from src.email.sender import email_sender_worker
+from src.email_resolver.worker import (
+    email_resolver_worker,
+    DBClients as ResolverDBClients,
+)
+from src.people.pattern_lookup import PatternLookup
 
 logger: logging.Logger | None = None
 
@@ -184,6 +189,10 @@ async def main() -> None:
         contacts=contacts_db,
         contact_campaigns=contact_campaigns_db,
     )
+    resolver_dbs = ResolverDBClients(
+        companies=companies_db, contacts=contacts_db, pool=pool,
+    )
+    pattern_lookup = PatternLookup(config, companies_db)
 
     # Install signal handlers
     loop = asyncio.get_running_loop()
@@ -201,6 +210,8 @@ async def main() -> None:
         ("campaign_scoring", campaign_scoring_worker,
          [config, gemini, contacts_db, companies_db, campaigns_db,
           contact_campaigns_db]),
+        ("email_resolver", email_resolver_worker,
+         [config, resolver_dbs, pattern_lookup, smtp_verifier]),
         ("email_gen", email_gen_worker,
          [config, gemini, campaigns_db, companies_db, contacts_db,
           emails_db, contact_campaigns_db]),
