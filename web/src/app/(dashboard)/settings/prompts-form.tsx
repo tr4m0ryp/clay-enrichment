@@ -73,7 +73,7 @@ function PromptRow({ item }: { item: PromptItem }) {
   }
 
   return (
-    <div className="rounded border border-border bg-card">
+    <div className="rounded border border-border bg-background">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
