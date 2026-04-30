@@ -97,6 +97,46 @@ class KeyPoolManager:
                 "(%s)", _key_prefix(self._private_api_key),
             )
 
+    async def get_key_for_models(
+        self, models: list[str],
+    ) -> Optional[tuple[UUID, str, str]]:
+        """Pick a key restricted to a specific list of model names.
+
+        Used by callers that need a feature only some model tiers
+        support -- e.g. the email_resolver's grounded-finder needs
+        Gemini 3 because Gemini 2.5 rejects grounding+json_mode in
+        one call (F16). Walks ``models`` in the given priority order,
+        returns the first available (uuid, key, model) tuple. If every
+        listed model is exhausted, falls through to the private Tier-1
+        backup (which serves Gemini 3 by default).
+
+        This bypasses the active-tier descent entirely -- we don't
+        descend out of the requested models because a 2.5 fallback
+        would be unusable for the caller's purpose. The cost: when
+        all requested models are 429-d, the only path forward is the
+        private key (or wait for cooldowns).
+        """
+        for model in models:
+            try:
+                picked = await pick_validated_key(self._pool, model)
+            except Exception:
+                logger.warning(
+                    "get_key_for_models: pick failed for %s",
+                    model, exc_info=True,
+                )
+                continue
+            if picked is not None:
+                key_id, key_value = picked
+                logger.info(
+                    "model-restricted handout: model=%s key_id=%s prefix=%s",
+                    model, key_id, _key_prefix(key_value),
+                )
+                return key_id, key_value, model
+
+        return await self._try_private_fallback(
+            f"models_exhausted({','.join(models)})",
+        )
+
     async def _try_private_fallback(
         self, reason: str,
     ) -> Optional[tuple[UUID, str, str]]:

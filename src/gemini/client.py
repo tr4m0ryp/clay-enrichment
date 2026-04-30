@@ -216,6 +216,15 @@ class GeminiClient:
         if max_retries is not None:
             kwargs["max_retries"] = max_retries
 
+        # F16: Gemini 2.5 returns 400 on grounding + structured JSON in
+        # one call. When the caller requests both, restrict the pool to
+        # Gemini 3 tiers; the manager falls through to the private
+        # Tier-1 backup if every harvested 3.x key is exhausted, so we
+        # never waste a call on an incompatible 2.5 tier.
+        if grounding and json_mode:
+            from src.api_keys.types import GROUNDED_JSON_COMPATIBLE_MODELS
+            kwargs["restrict_to_models"] = list(GROUNDED_JSON_COMPATIBLE_MODELS)
+
         try:
             response: GeminiResponse = await gemini_generate_content(
                 user_text, **kwargs,

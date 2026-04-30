@@ -54,6 +54,17 @@ TIER_LADDER: list[TierName] = [
     # 2.0-tier access is actually nonzero.
 ]
 
+# Models that accept grounding (google_search) AND structured JSON
+# output in a single request (per F16 / Google's release notes). Only
+# the Gemini 3 family supports this combo; Gemini 2.5 returns 400 if
+# both are set. Callers needing grounded structured output must restrict
+# their key picks to these tiers, then fall through to the private
+# Tier-1 backup if the harvested pool is exhausted across all of them.
+GROUNDED_JSON_COMPATIBLE_MODELS: list[TierName] = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
+]
+
 
 @dataclass(slots=True)
 class ScrapeMetadata:
