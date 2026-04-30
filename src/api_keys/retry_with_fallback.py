@@ -189,6 +189,7 @@ async def gemini_generate_content(
     max_circuit_waits: int = 3,
     manager: Optional[KeyPoolManager] = None,
     client: Optional[httpx.AsyncClient] = None,
+    restrict_to_models: Optional[list[str]] = None,
 ) -> GeminiResponse:
     """Run a Gemini generateContent call through the pool with full fallback.
 
@@ -201,6 +202,13 @@ async def gemini_generate_content(
     Optional ``tools`` (e.g. ``[{"google_search": {}}]`` for Google Search
     grounding) and ``system_instruction`` (top-level system prompt) are
     forwarded into the REST request body when provided.
+
+    ``restrict_to_models``: when set, only keys serving one of the listed
+    Gemini models are eligible. Used by callers that need a feature only
+    some model tiers support (e.g. grounded structured output requires
+    Gemini 3.x). The manager walks ``restrict_to_models`` in order and
+    falls through to the private Tier-1 backup when all listed tiers
+    are exhausted -- it never descends to incompatible 2.5 tiers.
     """
     mgr = manager if manager is not None else await _get_default_manager()
     http = client if client is not None else _get_default_client()
@@ -220,7 +228,10 @@ async def gemini_generate_content(
     circuit_waits = 0
     while attempt < max_retries:
         try:
-            key_info = await mgr.get_key_for_active_tier()
+            if restrict_to_models:
+                key_info = await mgr.get_key_for_models(restrict_to_models)
+            else:
+                key_info = await mgr.get_key_for_active_tier()
         except Exception as exc:
             logger.warning(
                 "manager.get_key_for_active_tier failed: %s; preview=%r",
