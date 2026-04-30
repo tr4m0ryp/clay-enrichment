@@ -28,15 +28,30 @@ export async function getSenderAccounts() {
   >(data, error);
 }
 
+// Total Prospeo monthly quota = (key count) * (per-key allowance).
+// Set via env so 100/key/month can be tweaked without a redeploy
+// when Prospeo's tier changes. Falls back to 1500 (15 keys * 100)
+// which matches the current pool size.
+const PROSPEO_MONTHLY_QUOTA = Number(
+  process.env.PROSPEO_MONTHLY_QUOTA ?? 1500,
+);
+
 export async function getDashboardStats() {
   const c = client();
-  const [leadsFound, leadsEnriched, emailsReady, activeCampaigns] =
+  // First-of-month UTC for the range filter. Indexed on used_at, so
+  // the >= comparison hits the b-tree directly. Avoids to_char-based
+  // generated columns (Postgres rejects them as non-IMMUTABLE).
+  const now = new Date();
+  const startOfMonth = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
+  ).toISOString();
+  const [leadsFound, prospeoUsed, emailsReady, activeCampaigns] =
     await Promise.all([
       c.from("contacts").select("*", { count: "exact", head: true }),
       c
-        .from("contacts")
-        .select("*", { count: "exact", head: true })
-        .in("status", ["Enriched", "Researched", "Email Generated"]),
+        .from("prospeo_usage")
+        .select("credits")
+        .gte("used_at", startOfMonth),
       c
         .from("emails")
         .select("*", { count: "exact", head: true })
@@ -46,12 +61,22 @@ export async function getDashboardStats() {
         .select("*", { count: "exact", head: true })
         .eq("status", "Active"),
     ]);
-  for (const r of [leadsFound, leadsEnriched, emailsReady, activeCampaigns]) {
+  for (const r of [leadsFound, emailsReady, activeCampaigns]) {
     if (r.error) throw new Error(r.error.message);
   }
+  if (prospeoUsed.error) {
+    // Don't fail the whole dashboard if the usage table is unavailable
+    // (e.g. schema migration not yet applied) -- just show 0/quota.
+    console.warn("getDashboardStats: prospeo_usage read failed:", prospeoUsed.error.message);
+  }
+  const usedCredits = (prospeoUsed.data ?? []).reduce(
+    (sum: number, row: { credits: number }) => sum + (row.credits ?? 0),
+    0,
+  );
   return {
     leadsFound: leadsFound.count ?? 0,
-    leadsEnriched: leadsEnriched.count ?? 0,
+    prospeoUsed: usedCredits,
+    prospeoTotal: PROSPEO_MONTHLY_QUOTA,
     emailsReady: emailsReady.count ?? 0,
     activeCampaigns: activeCampaigns.count ?? 0,
   };
