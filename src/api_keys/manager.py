@@ -42,7 +42,13 @@ _DEFAULT_MAX_COOLDOWN_SEC: int = 4 * 60 * 60
 # is what we want, because the backup key isn't quota-tracked in DB,
 # it's throttled per-process via _PRIVATE_KEY_MIN_INTERVAL.
 _PRIVATE_KEY_SENTINEL_UUID = UUID("00000000-0000-0000-0000-000000000001")
-_PRIVATE_KEY_DEFAULT_MODEL = "gemini-2.5-flash"
+# The private key serves Gemini 3 (Tier 1 paid plans have access).
+# This matters for grounded+json_mode callers like the email_resolver's
+# Gemini fallback finder: Gemini 2.5 rejects that combination in a
+# single call (F16), Gemini 3 accepts it. Routing the private key to
+# gemini-3-flash-preview lets those callers actually succeed when the
+# harvested pool's Gemini-3 keys are 429-d.
+_PRIVATE_KEY_DEFAULT_MODEL = "gemini-3-flash-preview"
 # Cap private-key usage: max 1 call every 2 seconds per process.
 # Rate-limit Gemini Tier 1 free is plenty for that. Keeps the pool
 # returning to harvested keys whenever they recover.
