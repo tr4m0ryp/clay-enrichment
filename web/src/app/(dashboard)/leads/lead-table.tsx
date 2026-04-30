@@ -15,6 +15,7 @@ export interface LeadRow {
   email_verified: boolean;
   linkedin_url: string | null;
   phone: string | null;
+  prospeo_status: "found" | "not_found" | "pending" | null;
   company_fit_score: number | null;
   relevance_score: number | null;
   email_subject: string | null;
@@ -108,6 +109,15 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
           </Badge>
         ) : (
           <span className="text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell>
+        {lead.prospeo_status === "found" ? (
+          <Badge variant="success" dot={false}>Found</Badge>
+        ) : lead.prospeo_status === "not_found" ? (
+          <Badge variant="warning" dot={false}>Not in DB</Badge>
+        ) : (
+          <Badge variant="outline" dot={false}>Pending</Badge>
         )}
       </TableCell>
       <TableCell>
