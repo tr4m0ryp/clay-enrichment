@@ -65,9 +65,9 @@ export default async function DashboardPage() {
       {/* Lead funnel stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Leads Found"
-          value={stats.leadsFound}
-          description="Total contacts discovered"
+          title="Gemini Keys"
+          value={stats.validatedKeys}
+          description="Valid harvested keys in pool"
           highlight
         />
         <QuotaCard
