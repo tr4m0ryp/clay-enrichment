@@ -63,7 +63,7 @@ export function CsvExportButton({ leads }: { leads: LeadRow[] }) {
 
   return (
     <Button
-      variant="outline"
+      variant="brand"
       size="sm"
       onClick={onClick}
       disabled={leads.length === 0}
