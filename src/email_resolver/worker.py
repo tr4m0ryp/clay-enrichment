@@ -60,9 +60,14 @@ async def _fetch_resolvable_pairs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
     # side-effect of the Hunter Email Finder call so a single credit
     # resolves both. Adding `OR linkedin_url IS NULL` would cause
     # contacts where Hunter genuinely has no LinkedIn slug to be
-    # re-fetched every cycle, burning credits indefinitely. Existing
-    # already-resolved leads are backfilled by a one-shot script
-    # (scripts/backfill_linkedin.py) instead.
+    # re-fetched every cycle, burning credits indefinitely.
+    #
+    # Cooldown clause -- skip rows touched in the last 6 hours so a
+    # contact Prospeo can't match doesn't get re-tried on every 3-min
+    # cycle, stealing concurrency slots from new high-priority leads.
+    # Distinguish "freshly scored, never tried" from "tried, missed":
+    # scoring inserts with updated_at = created_at; the resolver bumps
+    # updated_at on every persist, so a 1s tolerance separates the two.
     sql = """
         SELECT
             cc.id           AS junction_id,
@@ -81,6 +86,11 @@ async def _fetch_resolvable_pairs(pool: asyncpg.Pool) -> list[asyncpg.Record]:
         LEFT JOIN companies co ON cc.company_id = co.id
         WHERE cc.relevance_score >= $1
           AND (c.email IS NULL OR c.email = '')
+          AND (
+                cc.updated_at IS NULL
+             OR cc.updated_at <= cc.created_at + interval '1 second'
+             OR cc.updated_at < now() - interval '6 hours'
+          )
         ORDER BY cc.relevance_score DESC, cc.created_at ASC
         LIMIT 50
     """
