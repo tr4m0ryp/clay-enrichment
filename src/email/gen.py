@@ -149,6 +149,7 @@ async def generate_emails_for_company(
                 model=config.model_email_generation,
                 json_mode=True,
                 temperature=0.7,
+                max_retries=30,
             )
 
         base_user_message = (

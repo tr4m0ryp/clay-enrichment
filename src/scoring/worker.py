@@ -114,6 +114,7 @@ async def _score_with_llm(
         return await gemini_client.generate(
             prompt=prompt, user_message=user_message,
             model=config.model_scoring, json_mode=True,
+            max_retries=30,
         )
 
     base_msg = "Structure this research and score the contact for the campaign."
@@ -152,11 +153,21 @@ async def _process_pair(
     contact_id = str(contact["id"])
     campaign_id = str(campaign["id"])
 
-    # Dedup: skip if already scored
+    # Dedup: skip if already scored, BUT retry if the existing score
+    # came from a Gemini-call failure (score=1 fallback with reasoning
+    # starting "Scoring failed:"). Otherwise transient pool exhaustion
+    # would freeze the contact at score=1 permanently.
     existing = await contact_campaigns_db.find_by_contact_campaign(
         contact_id, campaign_id)
     if existing and (existing.get("relevance_score") or 0) > 0:
-        return False
+        prior_reason = (existing.get("score_reasoning") or "")
+        if prior_reason.startswith("Scoring failed:"):
+            logger.info(
+                "Re-scoring '%s' x '%s' (prior was a failure fallback)",
+                contact.get("name", "?"), campaign.get("name", "?"),
+            )
+        else:
+            return False
 
     cf = _extract_contact_fields(contact)
     campaign_name = campaign.get("name") or ""
