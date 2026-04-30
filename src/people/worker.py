@@ -127,6 +127,17 @@ async def _process_company(
         contact_name = (raw.get("name") or "").strip()
         if not contact_name:
             continue
+        # Drop hallucination-signature names: bare initials in the
+        # middle ("Anne M. Nielsen") or single-letter trailing tokens
+        # ("Beatriz M. S."). Without grounding the model invents these
+        # to fill out a roster; they all fail email construction so
+        # they're pure noise downstream.
+        if _looks_hallucinated(contact_name):
+            logger.info(
+                "People worker: dropping suspect name '%s' at '%s'",
+                contact_name, name,
+            )
+            continue
         key = contact_name.lower()
         if key in seen:
             logger.info(
@@ -143,7 +154,11 @@ async def _process_company(
                 job_title=(raw.get("title") or "").strip(),
                 email_addr="",  # resolved later by email_resolver worker
                 email_verified=False,
-                linkedin_url=(raw.get("linkedin_url") or "").strip(),
+                # The model cannot reliably know LinkedIn slug URLs
+                # (they redirect to dead pages). The prompt forces this
+                # to "" but we ALSO drop any value at the worker boundary
+                # so a stray non-empty string doesn't pollute the DB.
+                linkedin_url="",
             )
             if row is not None:
                 created += 1
@@ -161,6 +176,32 @@ async def _process_company(
     await dbs.companies.update_company(
         company_id, {"status": "Contacts Found"},
     )
+
+
+_SUSPECT_NAME_TOKEN_RE = None
+
+
+def _looks_hallucinated(name: str) -> bool:
+    """Heuristic: drop contact names that match a hallucination signature.
+
+    Without grounding, Gemini fills in unknown roster members with
+    plausible-sounding placeholders. Two patterns observed in production
+    runs:
+      - middle initials: "Anne M. Nielsen", "Carolina M. de la Cruz"
+      - trailing single-letter tokens: "Beatriz M. S.", "Irene M. G."
+    Both produce broken email constructions (last_word becomes "M." or
+    "S."). Reject at the worker boundary so they don't clutter the DB.
+    """
+    import re
+    global _SUSPECT_NAME_TOKEN_RE
+    if _SUSPECT_NAME_TOKEN_RE is None:
+        # Match: a single-letter uppercase token followed by a period,
+        # which appears either between spaces (inline middle initial)
+        # or at the end of the string (trailing initial-only token).
+        _SUSPECT_NAME_TOKEN_RE = re.compile(
+            r"(?:^|\s)[A-Z]\.(?:\s|$)"
+        )
+    return bool(_SUSPECT_NAME_TOKEN_RE.search(name.strip()))
 
 
 async def _discover_contacts(
