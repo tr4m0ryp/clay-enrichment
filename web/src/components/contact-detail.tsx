@@ -6,10 +6,16 @@ import { BodyContent } from "@/components/body-content";
 interface ContactDetailProps {
   contact: Record<string, unknown>;
   backUrl: string;
+  backLabel?: string;
   campaignId?: string;
 }
 
-export function ContactDetail({ contact, backUrl, campaignId }: ContactDetailProps) {
+export function ContactDetail({
+  contact,
+  backUrl,
+  backLabel = "Contacts",
+  campaignId,
+}: ContactDetailProps) {
   const companyHref = contact.company_id
     ? campaignId
       ? `/campaigns/${campaignId}/companies/${contact.company_id}`
@@ -67,7 +73,7 @@ export function ContactDetail({ contact, backUrl, campaignId }: ContactDetailPro
         href={backUrl}
         className="text-sm text-muted-foreground hover:text-foreground"
       >
-        &larr; Contacts
+        &larr; {backLabel}
       </Link>
 
       <div>

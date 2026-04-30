@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/table";
 import { DataTable } from "@/components/ui/data-table";
 import { CampaignFilter } from "./campaign-filter";
+import { CsvExportButton } from "./csv-export-button";
 import { LeadRow, LeadTableRow } from "./lead-table";
 
 export default async function LeadsPage({
@@ -36,7 +37,10 @@ export default async function LeadsPage({
             Contacts with a Fit or Relevance score of 7+.
           </p>
         </div>
-        <CampaignFilter campaigns={campaigns} current={campaignFilter} />
+        <div className="flex items-center gap-2">
+          <CampaignFilter campaigns={campaigns} current={campaignFilter} />
+          <CsvExportButton leads={leads} />
+        </div>
       </div>
 
       <DataTable
