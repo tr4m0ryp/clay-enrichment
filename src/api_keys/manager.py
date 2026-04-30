@@ -138,15 +138,18 @@ class KeyPoolManager:
                 )
                 return key_id, key_value, model
 
-        # No model has an immediately-pickable key. Distinguish minute
-        # rate-limit (wait it out) from daily quota exhaustion (use
-        # private backup).
+        # No model has an immediately-pickable key. Only wait if
+        # recovery is *very* near (within 30s) -- a per-second throttle
+        # we can ride out cheaply. Anything farther out, switch to the
+        # private key right away. The previous 10-min window was too
+        # generous and turned every per-minute 429 into a circuit-wait
+        # spiral that never reached the private fallback.
         if await self._models_have_imminent_cooldown(
-            models, window_seconds=600,
+            models, window_seconds=30,
         ):
             logger.info(
-                "model-restricted pool: %s cooling down within 10min "
-                "-- waiting instead of falling to private key",
+                "model-restricted pool: %s recovering within 30s "
+                "-- waiting one cycle before private fallback",
                 ",".join(models),
             )
             return None
