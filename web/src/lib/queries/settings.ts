@@ -47,9 +47,16 @@ export async function getDashboardStats() {
   const windowStart = new Date(
     Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const [leadsFound, prospeoCalls, emailsReady, activeCampaigns] =
+  const [validatedKeys, prospeoCalls, emailsReady, activeCampaigns] =
     await Promise.all([
-      c.from("contacts").select("*", { count: "exact", head: true }),
+      // Count harvested Gemini keys currently usable by the pool.
+      // Same filter pick_validated_key uses at hand-out time so the
+      // dashboard reflects what the runtime actually sees.
+      c
+        .from("validated_keys")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "valid")
+        .lt("consecutive_failures", 3),
       // Pull credits per row so we can derive both the call count
       // (=row count, includes free NO_MATCH calls) and the credit
       // total (=sum of credits, the actual budget figure).
@@ -66,7 +73,7 @@ export async function getDashboardStats() {
         .select("*", { count: "exact", head: true })
         .eq("status", "Active"),
     ]);
-  for (const r of [leadsFound, emailsReady, activeCampaigns]) {
+  for (const r of [validatedKeys, emailsReady, activeCampaigns]) {
     if (r.error) throw new Error(r.error.message);
   }
   if (prospeoCalls.error) {
@@ -82,7 +89,7 @@ export async function getDashboardStats() {
     0,
   );
   return {
-    leadsFound: leadsFound.count ?? 0,
+    validatedKeys: validatedKeys.count ?? 0,
     prospeoCalls: callsCount,
     prospeoCredits: creditsUsed,
     prospeoTotal: getProspeoMonthlyQuota(),
