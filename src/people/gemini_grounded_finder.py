@@ -39,16 +39,10 @@ _RETRY_COOLDOWN_DAYS = 7
 PROMPT = build_system_prompt("""\
 ## Task
 Find BOTH the LinkedIn profile URL AND the most likely work email for
-a specific person at a specific company by searching the open web. You
-have Google Search grounding enabled -- use it to find verified public
-sources: company team pages, conference speaker bios, press releases,
-podcast guests, GitHub commits, blog interviews.
-
-The LinkedIn URL is just as important as the email. A LinkedIn search
-in the form ``"<full name>" "<company name>" site:linkedin.com/in``
-almost always surfaces the profile -- run that query and inspect the
-top results. Do NOT return only an email when a LinkedIn URL is also
-findable.
+a specific person at a specific company. You have Google Search
+grounding enabled -- use it. The downstream pipeline NEEDS BOTH
+fields. Returning only one when the other is findable is the most
+common failure mode. Do not commit it.
 
 ## Inputs
 - {contact_name}: full name (string)
@@ -57,6 +51,34 @@ findable.
 - {company_website}: employer's website URL (string)
 - {context}: free-text context about the person from prior research
   (string, may be empty)
+
+## Procedure -- follow these steps in order, do not skip any
+1. Run a LinkedIn-targeted search: ``"{contact_name}" "{company_name}" site:linkedin.com/in``
+   Inspect the top 5 results. The correct profile slug typically
+   matches the contact's name (linkedin.com/in/<firstname-lastname>
+   or a similar variant). Confirm the profile mentions
+   {company_name} or a closely related company in the headline /
+   experience snippet. Capture the URL.
+2. Run a published-email search: ``"{contact_name}" "@{company_website}"``
+   plus a second pass for ``"{contact_name}" {company_name} contact``.
+   Inspect company team pages, press releases, conference speaker
+   bios, podcast guest pages. Capture any email at
+   {company_website}'s domain.
+3. If step 2 yielded nothing, run a peer-pattern search: ``"@{company_website}"``
+   to find any 2-3 example employee emails. Infer the company-wide
+   pattern (firstname.lastname@, firstname@, firstinitial+lastname@,
+   etc) and apply it to {contact_name}. Mark email_confidence="medium".
+4. Only AFTER steps 1-3 are completed, build the JSON output.
+
+If step 1 found nothing, retry it with a relaxed query (drop the
+quotes, swap the company name for the domain). If step 2 found
+nothing, retry with the contact's first name only.
+
+Returning a non-empty email with an empty linkedin_url means you did
+not run step 1 properly. Returning a non-empty linkedin_url with an
+empty email means you did not run steps 2-3 properly. The prior
+output that's been failing in production looks exactly like that --
+do not repeat it.
 
 ## Output Format -- EXACT
 Return ONLY a valid JSON object. No markdown fences, no prose.
@@ -71,12 +93,12 @@ Return ONLY a valid JSON object. No markdown fences, no prose.
 
 ### Field rules
 - linkedin_url: a real, current LinkedIn profile URL you can verify in
-  the search results. Must start with https://www.linkedin.com/in/.
+  the search results. Format: ``https://www.linkedin.com/in/<slug>``.
   Empty string when not findable -- do NOT fabricate slugs.
 - email: must end with @ + the company's primary domain. Off-domain
-  matches (personal Gmail, vendor emails, contact@) are rejected.
-  Empty string when no candidate email is publicly visible AND no
-  obvious pattern is inferable from peers at the same company.
+  matches (personal Gmail, vendor emails, contact@) are rejected by
+  the caller. Empty string when no candidate email is visible AND no
+  pattern is inferable from peers at the same company.
 - email_confidence: high when literally published on a primary source
   (team page, press release); medium when inferred from a clear
   company-wide pattern visible in 2+ peer emails; low when guessed
@@ -85,18 +107,81 @@ Return ONLY a valid JSON object. No markdown fences, no prose.
   to the profile and the slug matches the name+company; medium when
   the profile is found but the company page hasn't been verified;
   low when only the slug shape suggests it; none when not found.
-- sources: list of URLs you actually used. Each entry must be an
-  absolute https URL that appeared in the search results.
+- sources: list of URLs you actually used (LinkedIn search result
+  pages, team pages, press releases). 2-5 entries typically.
 
 ## Hard Rules
 - Output is JSON ONLY.
-- Empty string is preferred over a guess. We have a downstream email
-  verifier that will reject bad guesses, but burning verifier credits
-  on hallucinated emails is wasteful.
+- BOTH searches must be attempted. Returning a result with one field
+  empty when you didn't even try the search for it is a failure.
 - Never fabricate URLs.
 - Never use sentinel strings ("Unknown", "N/A", etc).
 - Never use emojis.
 - Never include keys not in the schema.
+""")
+
+
+# Targeted follow-up prompts. Used when the primary call returned
+# only one of the two fields -- a single focused search has higher
+# recall than re-running the combined prompt.
+
+PROMPT_LINKEDIN_ONLY = build_system_prompt("""\
+## Task
+Find ONLY the LinkedIn profile URL for the named contact. The
+caller already has the work email; they need the LinkedIn URL.
+
+## Inputs
+- {contact_name}: full name
+- {job_title}: current job title (may be empty)
+- {company_name}: employer
+- {company_website}: employer's website URL
+
+## Procedure
+1. Run: ``"{contact_name}" "{company_name}" site:linkedin.com/in``
+2. If no exact match in top results, retry without quotes.
+3. If still nothing, run: ``{contact_name} {company_name} linkedin``
+   and inspect any linkedin.com/in/* result.
+4. Confirm the profile's headline / experience mentions
+   {company_name} or a closely related company before accepting.
+
+## Output -- EXACT JSON, nothing else
+{
+  "linkedin_url": "string -- https://www.linkedin.com/in/<slug> or empty",
+  "linkedin_confidence": "high | medium | low | none",
+  "sources": ["string -- absolute URL"]
+}
+
+Empty string is preferred over a fabricated slug. Never invent.
+""")
+
+PROMPT_EMAIL_ONLY = build_system_prompt("""\
+## Task
+Find ONLY the work email for the named contact at {company_website}.
+The caller already has the LinkedIn URL; they need the email.
+
+## Inputs
+- {contact_name}: full name
+- {job_title}: current job title (may be empty)
+- {company_name}: employer
+- {company_website}: employer's website URL
+
+## Procedure
+1. Run: ``"{contact_name}" "@{company_website}"``
+2. Run: ``{contact_name} {company_name} contact email``
+3. If neither yielded a published email, run ``"@{company_website}"``
+   to find 2-3 peer emails. Infer the pattern
+   (firstname.lastname@, firstname@, etc) and apply it.
+
+## Output -- EXACT JSON, nothing else
+{
+  "email": "string -- email at @{company_website} or empty",
+  "email_confidence": "high | medium | low | none",
+  "sources": ["string -- absolute URL"]
+}
+
+Email MUST end with @ + the company's primary domain. Off-domain
+matches must be rejected. Empty string is preferred over a guess
+without basis.
 """)
 
 
@@ -259,6 +344,38 @@ class GeminiGroundedFinder:
             return None
 
         out = self._extract(parsed, domain)
+
+        # Targeted recovery: if the primary call returned only one of
+        # the two fields, run a focused follow-up to fill the gap. The
+        # follow-up prompts are narrower (single-field search procedure)
+        # and recall the missing field much more reliably than the
+        # combined prompt. Cost: 1 extra grounded call only on partial
+        # hits, never on full hits or full misses.
+        if out.email and not out.linkedin_url:
+            logger.info(
+                "GeminiGroundedFinder: partial (email-only) for %s @ %s "
+                "-- running LinkedIn-only follow-up",
+                contact_name, domain,
+            )
+            li = await self._followup_linkedin(
+                contact_name, job_title, company_name or domain,
+                company_website or domain,
+            )
+            if li:
+                out.linkedin_url = li
+        elif out.linkedin_url and not out.email:
+            logger.info(
+                "GeminiGroundedFinder: partial (linkedin-only) for %s @ %s "
+                "-- running email-only follow-up",
+                contact_name, domain,
+            )
+            em = await self._followup_email(
+                contact_name, job_title, company_name or domain,
+                company_website or domain, domain,
+            )
+            if em:
+                out.email = em
+
         await self._log_usage(
             contact_id, domain,
             found_email=bool(out.email),
@@ -276,6 +393,100 @@ class GeminiGroundedFinder:
             len(out.sources or []),
         )
         return out
+
+    async def _followup_linkedin(
+        self,
+        contact_name: str,
+        job_title: str,
+        company_name: str,
+        company_website: str,
+    ) -> str:
+        """One focused grounded call for just the LinkedIn URL. Returns
+        a normalized URL or empty string. Failures are swallowed --
+        partial result is preferable to crashing the whole resolution.
+        """
+        rendered = (
+            PROMPT_LINKEDIN_ONLY
+            .replace("{contact_name}", contact_name)
+            .replace("{job_title}", job_title or "")
+            .replace("{company_name}", company_name)
+            .replace("{company_website}", company_website)
+        )
+
+        async def _call(user_message: str) -> dict:
+            return await self._gemini.generate(
+                prompt=rendered,
+                user_message=user_message,
+                grounding=True,
+                json_mode=True,
+                max_retries=5,
+            )
+
+        msg = f"Find LinkedIn URL for {contact_name} at {company_name}."
+        try:
+            result = await retry_on_malformed_json(_call, msg)
+        except Exception:
+            logger.warning(
+                "GeminiGroundedFinder: linkedin follow-up failed for %s",
+                contact_name, exc_info=True,
+            )
+            return ""
+        if result is None:
+            return ""
+        parsed, _ = result
+        if not isinstance(parsed, dict):
+            return ""
+        return _normalize_linkedin_url(parsed.get("linkedin_url") or "")
+
+    async def _followup_email(
+        self,
+        contact_name: str,
+        job_title: str,
+        company_name: str,
+        company_website: str,
+        domain: str,
+    ) -> str:
+        """One focused grounded call for just the work email. Returns
+        a domain-validated email or empty string.
+        """
+        rendered = (
+            PROMPT_EMAIL_ONLY
+            .replace("{contact_name}", contact_name)
+            .replace("{job_title}", job_title or "")
+            .replace("{company_name}", company_name)
+            .replace("{company_website}", company_website)
+        )
+
+        async def _call(user_message: str) -> dict:
+            return await self._gemini.generate(
+                prompt=rendered,
+                user_message=user_message,
+                grounding=True,
+                json_mode=True,
+                max_retries=5,
+            )
+
+        msg = f"Find work email for {contact_name} at {company_name}."
+        try:
+            result = await retry_on_malformed_json(_call, msg)
+        except Exception:
+            logger.warning(
+                "GeminiGroundedFinder: email follow-up failed for %s",
+                contact_name, exc_info=True,
+            )
+            return ""
+        if result is None:
+            return ""
+        parsed, _ = result
+        if not isinstance(parsed, dict):
+            return ""
+        email = (parsed.get("email") or "").strip().lower()
+        if "@" not in email:
+            return ""
+        local, _, edomain = email.partition("@")
+        if not local or edomain != domain.lower():
+            return ""
+        return email
 
     @staticmethod
     def _extract(parsed: dict, domain: str) -> GeminiFinderResult:
