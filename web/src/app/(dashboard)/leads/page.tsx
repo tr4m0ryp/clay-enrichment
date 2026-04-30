@@ -51,12 +51,12 @@ export default async function LeadsPage({
             <TableHead>Name</TableHead>
             <TableHead>Job Title</TableHead>
             <TableHead>Email</TableHead>
+            <TableHead>Verified</TableHead>
             <TableHead>LinkedIn</TableHead>
             <TableHead className="text-right">Fit</TableHead>
             <TableHead className="text-right">Relevance</TableHead>
             <TableHead>Email Subject</TableHead>
             <TableHead>Email Content</TableHead>
-            <TableHead>Outreach</TableHead>
             <TableHead>Score Reasoning</TableHead>
             <TableHead>Context</TableHead>
             <TableHead>Personalized Context</TableHead>

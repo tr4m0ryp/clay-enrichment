@@ -3,7 +3,7 @@ import {
   TableCell,
   TableRow,
 } from "@/components/ui/table";
-import { OutreachSelect } from "./outreach-select";
+import { ExpandableCell } from "@/components/ui/expandable-cell";
 
 export interface LeadRow {
   id: string;
@@ -11,10 +11,10 @@ export interface LeadRow {
   job_title: string | null;
   company_name: string | null;
   email: string | null;
+  email_verified: boolean;
   linkedin_url: string | null;
   company_fit_score: number | null;
   relevance_score: number | null;
-  outreach_status: string;
   email_subject: string | null;
   campaign_id: string;
   campaign_name?: string | null;
@@ -73,6 +73,18 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
         )}
       </TableCell>
       <TableCell>
+        {lead.email ? (
+          <Badge
+            variant={lead.email_verified ? "success" : "outline"}
+            dot={false}
+          >
+            {lead.email_verified ? "Verified" : "Unverified"}
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">--</span>
+        )}
+      </TableCell>
+      <TableCell>
         {lead.linkedin_url ? (
           <a
             href={lead.linkedin_url}
@@ -96,34 +108,23 @@ export function LeadTableRow({ lead }: { lead: LeadRow }) {
           {lead.relevance_score ?? "--"}
         </Badge>
       </TableCell>
-      <TableCell className="text-muted-foreground text-xs">
-        {lead.email_subject ?? "--"}
+      <TableCell className="max-w-[200px]">
+        <ExpandableCell label="Email Subject" content={lead.email_subject} />
       </TableCell>
       <TableCell className="max-w-[200px]">
-        <span className="text-xs text-muted-foreground line-clamp-2">
-          {lead.email_body ?? "--"}
-        </span>
+        <ExpandableCell label="Email Content" content={lead.email_body} />
       </TableCell>
-      <TableCell>
-        <OutreachSelect
-          leadId={lead.id}
-          current={lead.outreach_status}
+      <TableCell className="max-w-[180px]">
+        <ExpandableCell label="Score Reasoning" content={lead.score_reasoning} />
+      </TableCell>
+      <TableCell className="max-w-[180px]">
+        <ExpandableCell label="Context" content={lead.context} />
+      </TableCell>
+      <TableCell className="max-w-[180px]">
+        <ExpandableCell
+          label="Personalized Context"
+          content={lead.personalized_context}
         />
-      </TableCell>
-      <TableCell className="max-w-[180px]">
-        <span className="text-xs text-muted-foreground line-clamp-2">
-          {lead.score_reasoning ?? "--"}
-        </span>
-      </TableCell>
-      <TableCell className="max-w-[180px]">
-        <span className="text-xs text-muted-foreground line-clamp-2">
-          {lead.context ?? "--"}
-        </span>
-      </TableCell>
-      <TableCell className="max-w-[180px]">
-        <span className="text-xs text-muted-foreground line-clamp-2">
-          {lead.personalized_context ?? "--"}
-        </span>
       </TableCell>
     </TableRow>
   );

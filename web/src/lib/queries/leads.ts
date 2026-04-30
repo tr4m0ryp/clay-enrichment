@@ -48,13 +48,3 @@ export async function getHighPriorityLeads(campaignId?: string) {
   return unwrap<Record<string, unknown>[]>(data, error);
 }
 
-export async function updateContactCampaignOutreach(
-  id: string,
-  status: string,
-) {
-  const { error } = await client()
-    .from("contact_campaigns")
-    .update({ outreach_status: status })
-    .eq("id", id);
-  if (error) throw new Error(error.message);
-}
