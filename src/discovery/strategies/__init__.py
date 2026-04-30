@@ -52,13 +52,22 @@ STRATEGIES: list[Strategy] = [
 
 
 def pick_strategy(index: int) -> Strategy:
-    """Return STRATEGIES[index % 13].
+    """Return the next pickable strategy by rotating through STRATEGIES.
 
-    The discovery worker stores `campaigns.discovery_strategy_index` and
-    increments it each cycle. This helper handles the modulo so callers
-    don't have to.
+    Tier 1 (intent signals: hiring, funding, leadership change, product
+    launch, market expansion, regulatory) requires fresh web access via
+    grounded search. Until F16's tier-aware fallback is wired in we run
+    Gemini calls with grounding=False, so Tier 1 strategies return empty
+    JSON arrays and waste a cycle plus tokens. Filter them out of the
+    rotation: only Tier 2 (geography/sub-niche/certification/adjacency)
+    and Tier 3 (trade shows/awards/media lists) are picked. The 7
+    remaining strategies still rotate by ``index % len(pickable)`` so
+    the worker's incrementing cursor keeps cycling deterministically.
+
+    To re-enable Tier 1 once grounding is restored, drop the filter.
     """
-    return STRATEGIES[index % len(STRATEGIES)]
+    pickable = [s for s in STRATEGIES if s.tier > 1]
+    return pickable[index % len(pickable)]
 
 
 __all__ = [
